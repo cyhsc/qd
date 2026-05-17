@@ -1,0 +1,25 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.sqlite3
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Data / state files
+backend/watchlists.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
