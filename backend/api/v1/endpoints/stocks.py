@@ -1,6 +1,8 @@
 import logging
 import time
 
+import numpy as np
+import talib
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -193,29 +195,6 @@ async def get_history(
             "candles": candles, "volume": volume}
 
 
-# ── Indicator math ────────────────────────────────────────────────────────────
-
-def _sma(closes: list, period: int) -> list:
-    out = []
-    for i in range(period - 1, len(closes)):
-        out.append(sum(closes[i - period + 1 : i + 1]) / period)
-    return out                                  # length = len(closes) - period + 1
-
-
-def _ema(closes: list, period: int) -> list:
-    """Returns a list aligned with `closes`; first (period-1) entries are None."""
-    if len(closes) < period:
-        return [None] * len(closes)
-    k   = 2 / (period + 1)
-    out = [None] * (period - 1)
-    ema = sum(closes[:period]) / period
-    out.append(ema)
-    for c in closes[period:]:
-        ema = c * k + ema * (1 - k)
-        out.append(ema)
-    return out
-
-
 # ── Indicators endpoint ───────────────────────────────────────────────────────
 
 @router.get("/{symbol}/indicators")
@@ -229,28 +208,28 @@ async def get_indicators(
     sym         = symbol.upper()
     yf_interval = INTERVAL_MAP.get(interval) if interval else "1d"
     if interval and yf_interval is None:
-        raise HTTPException(status_code=400, detail=f"Invalid interval.")
+        raise HTTPException(status_code=400, detail="Invalid interval.")
 
     rows = await read_cached_prices(db, sym, yf_interval)
     if not rows:
         return {"symbol": sym, "interval": yf_interval, "ma": {}, "macd": {}}
 
-    closes = [r.close for r in rows]
+    closes = np.array([r.close for r in rows], dtype=np.float64)
     times  = [to_chart_time(r.ts) for r in rows]
 
-    # ── Moving averages ────────────────────────────────────────────────────────
+    # ── Moving averages (TA-Lib SMA) ──────────────────────────────────────────
     ma_out: dict = {}
     for period in set(ma):
         if period < 1 or len(closes) < period:
             continue
-        vals = _sma(closes, period)
-        offset = len(closes) - len(vals)           # = period - 1
+        vals = talib.SMA(closes, timeperiod=period)
         ma_out[str(period)] = [
-            {"time": times[offset + i], "value": round(v, 4)}
+            {"time": times[i], "value": round(float(v), 4)}
             for i, v in enumerate(vals)
+            if not np.isnan(v)
         ]
 
-    # ── MACD ──────────────────────────────────────────────────────────────────
+    # ── MACD (TA-Lib MACD) ────────────────────────────────────────────────────
     macd_out: dict = {}
     for param in set(macd):
         parts = param.split(",")
@@ -261,25 +240,19 @@ async def get_indicators(
         except ValueError:
             continue
 
-        fast_ema = _ema(closes, fast)
-        slow_ema = _ema(closes, slow)
-
-        macd_vals, macd_times = [], []
-        for i in range(slow - 1, len(closes)):
-            if fast_ema[i] is not None and slow_ema[i] is not None:
-                macd_vals.append(fast_ema[i] - slow_ema[i])
-                macd_times.append(times[i])
-
-        sig_ema = _ema(macd_vals, sig)
+        macd_line_arr, signal_arr, hist_arr = talib.MACD(
+            closes, fastperiod=fast, slowperiod=slow, signalperiod=sig
+        )
 
         macd_line, signal_line, histogram = [], [], []
-        for i, (t, m) in enumerate(zip(macd_times, macd_vals)):
-            macd_line.append({"time": t, "value": round(m, 6)})
-            if sig_ema[i] is not None:
-                s = sig_ema[i]
-                h = m - s
-                signal_line.append({"time": t, "value": round(s, 6)})
-                histogram.append({"time": t, "value": round(h, 6)})
+        for i in range(len(closes)):
+            m, s, h = macd_line_arr[i], signal_arr[i], hist_arr[i]
+            if np.isnan(m):
+                continue
+            macd_line.append({"time": times[i], "value": round(float(m), 6)})
+            if not np.isnan(s):
+                signal_line.append({"time": times[i], "value": round(float(s), 6)})
+                histogram.append({"time": times[i], "value": round(float(h), 6)})
 
         macd_out[param] = {
             "macd_line":   macd_line,
