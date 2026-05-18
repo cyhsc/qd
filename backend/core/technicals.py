@@ -11,6 +11,20 @@ import numpy as np
 import talib
 
 
+def calc_ema(closes: np.ndarray, period: int, times: list) -> list[dict]:
+    """Exponential Moving Average.
+
+    Returns a list of ``{time, value}`` dicts with the NaN warm-up
+    period stripped.
+    """
+    vals = talib.EMA(closes, timeperiod=period)
+    return [
+        {"time": times[i], "value": round(float(v), 4)}
+        for i, v in enumerate(vals)
+        if not np.isnan(v)
+    ]
+
+
 def calc_sma(closes: np.ndarray, period: int, times: list) -> list[dict]:
     """Simple Moving Average.
 

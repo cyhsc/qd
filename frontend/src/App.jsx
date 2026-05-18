@@ -75,8 +75,13 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('qd_macd_configs') ?? 'null') ?? [] }
     catch { return [] }
   })
+  const [guppyConfigs, setGuppyConfigs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('qd_guppy_configs') ?? 'null') ?? [] }
+    catch { return [] }
+  })
   // Pre-calculated indicator data from backend
   const [maData,   setMaData]   = useState({})
+  const [emaData,  setEmaData]  = useState({})
   const [macdData, setMacdData] = useState({})
 
   // Watchlist state
@@ -109,6 +114,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('qd_macd_configs', JSON.stringify(macdConfigs))
   }, [macdConfigs])
+
+  useEffect(() => {
+    localStorage.setItem('qd_guppy_configs', JSON.stringify(guppyConfigs))
+  }, [guppyConfigs])
 
   // ── Fetch chart data ──────────────────────────────────────────────────────
 
@@ -152,27 +161,34 @@ export default function App() {
   // Clears stale data immediately so the chart doesn't show old indicators
   // for a new symbol while the fetch is in flight.
 
-  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs) => {
-    if (!sym || (!maCfgs.length && !macdCfgs.length)) {
-      setMaData({}); setMacdData({}); return
+  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, guppyCfgs) => {
+    const hasAny = maCfgs.length || macdCfgs.length || guppyCfgs.length
+    if (!sym || !hasAny) {
+      setMaData({}); setEmaData({}); setMacdData({}); return
     }
     const params = new URLSearchParams()
     if (ivl) params.set('interval', ivl)
     maCfgs.forEach(m   => params.append('ma',   m.period))
     macdCfgs.forEach(m => params.append('macd', `${m.fast},${m.slow},${m.signal}`))
+    if (guppyCfgs.length) {
+      // Request all 12 Guppy EMA periods in one call
+      ;[3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610]
+        .forEach(p => params.append('ema', p))
+    }
     try {
       const res = await fetch(`/api/stocks/${sym}/indicators?${params}`)
       if (!res.ok) return
       const data = await res.json()
       setMaData(data.ma   ?? {})
+      setEmaData(data.ema  ?? {})
       setMacdData(data.macd ?? {})
     } catch { /* indicators are optional */ }
   }, [])
 
   useEffect(() => {
-    if (!symbol || !candles) { setMaData({}); setMacdData({}); return }
-    fetchIndicators(symbol, interval, maConfigs, macdConfigs)
-  }, [symbol, interval, maConfigs, macdConfigs, candles, fetchIndicators])
+    if (!symbol || !candles) { setMaData({}); setEmaData({}); setMacdData({}); return }
+    fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs)
+  }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, candles, fetchIndicators])
 
   // ── Toolbar handlers ──────────────────────────────────────────────────────
 
@@ -348,8 +364,9 @@ export default function App() {
             })}
             <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
             <IndicatorPanel
-              maConfigs={maConfigs}   onMaChange={setMaConfigs}
-              macdConfigs={macdConfigs} onMacdChange={setMacdConfigs}
+              maConfigs={maConfigs}       onMaChange={setMaConfigs}
+              macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
+              guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
             />
           </div>
         </div>
@@ -412,8 +429,9 @@ export default function App() {
             <StockChart
               candles={candles}    volume={volume}
               visibleDays={RANGE_DAYS[range]}
-              maConfigs={maConfigs}    maData={maData}
-              macdConfigs={macdConfigs} macdData={macdData}
+              maConfigs={maConfigs}       maData={maData}
+              macdConfigs={macdConfigs}   macdData={macdData}
+              guppyConfigs={guppyConfigs} emaData={emaData}
             />
           )}
         </main>

@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 
+// ── Guppy period groups ───────────────────────────────────────────────────────
+
+const GUPPY_SHORT = [3, 5, 8, 13, 21, 34]
+const GUPPY_LONG  = [55, 89, 144, 233, 377, 610]
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const SPLIT_DEFAULT = 0.65
@@ -88,7 +93,9 @@ export function StockChart({
   visibleDays  = Infinity,
   maConfigs    = [],
   macdConfigs  = [],
+  guppyConfigs = [],
   maData       = {},   // { "20": [{time,value}, ...] }
+  emaData      = {},   // { "3": [{time,value}, ...], "55": [...], ... }
   macdData     = {},   // { "12,26,9": { macd_line, signal_line, histogram } }
 }) {
   const containerRef   = useRef(null)
@@ -105,9 +112,10 @@ export function StockChart({
   const macdSeriesMap = useRef(new Map())
   const macdLastRef   = useRef({})
   const macdByTimeRef = useRef({})
-  // Reference to any live MACD histogram series — used to update the
-  // 'macd' overlay price-scale margins without relying on chart.priceScale().
   const macdScaleRef  = useRef(null)
+
+  // guppySeriesMap: id → Map<period, series>
+  const guppySeriesMap = useRef(new Map())
 
   const [hover,      setHover]      = useState(null)
   const [maLegend,   setMaLegend]   = useState({})
@@ -218,6 +226,7 @@ export function StockChart({
       macdScaleRef.current = null
       maSeriesMap.current.clear()
       macdSeriesMap.current.clear()
+      guppySeriesMap.current.clear()
       maLastValsRef.current  = {}
       macdLastRef.current    = {}
       macdByTimeRef.current  = {}
@@ -389,6 +398,54 @@ export function StockChart({
     setMacdLegend({ ...macdLastRef.current })
   }, [macdConfigs, macdData])
 
+  // ── Guppy MMA series ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart    = chartRef.current
+    const map      = guppySeriesMap.current
+    const incoming = new Set(guppyConfigs.map(g => g.id))
+
+    // Remove stale configs
+    for (const [id, seriesByPeriod] of map) {
+      if (!incoming.has(id)) {
+        for (const s of seriesByPeriod.values()) chart.removeSeries(s)
+        map.delete(id)
+      }
+    }
+
+    for (const cfg of guppyConfigs) {
+      if (!map.has(cfg.id)) {
+        // Create 12 line series — 6 short (red group) + 6 long (blue group)
+        const seriesByPeriod = new Map()
+        for (const p of GUPPY_SHORT) {
+          seriesByPeriod.set(p, chart.addLineSeries({
+            color: cfg.shortColor, lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          }))
+        }
+        for (const p of GUPPY_LONG) {
+          seriesByPeriod.set(p, chart.addLineSeries({
+            color: cfg.longColor, lineWidth: 1,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          }))
+        }
+        map.set(cfg.id, seriesByPeriod)
+      } else {
+        // Update colors if changed
+        const seriesByPeriod = map.get(cfg.id)
+        for (const p of GUPPY_SHORT) seriesByPeriod.get(p)?.applyOptions({ color: cfg.shortColor })
+        for (const p of GUPPY_LONG)  seriesByPeriod.get(p)?.applyOptions({ color: cfg.longColor })
+      }
+
+      // Set data for each period from emaData
+      const seriesByPeriod = map.get(cfg.id)
+      for (const [period, series] of seriesByPeriod) {
+        series.setData(emaData[String(period)] ?? [])
+      }
+    }
+  }, [guppyConfigs, emaData])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   const isUp = hover ? hover.close >= hover.open : true
@@ -440,6 +497,31 @@ export function StockChart({
               {maLegend[ma.id] != null && (
                 <span style={{ color: ma.color }}>{fmtPrice(maLegend[ma.id])}</span>
               )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Guppy legend */}
+      {guppyConfigs.length > 0 && (
+        <div style={{
+          position: 'absolute', top: 30, left: 12, zIndex: 10,
+          display: 'flex', flexWrap: 'wrap', gap: '12px',
+          fontSize: '12px', fontFamily: 'var(--font-mono)', pointerEvents: 'none',
+          // offset below MA legend if both are present
+          marginTop: maConfigs.length > 0 ? '18px' : '0',
+        }}>
+          {guppyConfigs.map(cfg => (
+            <span key={cfg.id} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={{
+                display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px',
+                background: `linear-gradient(to bottom, ${cfg.shortColor} 50%, ${cfg.longColor} 50%)`,
+                flexShrink: 0,
+              }} />
+              <span style={{ color: 'var(--text-muted)' }}>GMMA</span>
+              <span style={{ color: cfg.shortColor }}>S</span>
+              <span style={{ color: 'var(--text-muted)'}}>/</span>
+              <span style={{ color: cfg.longColor }}>L</span>
             </span>
           ))}
         </div>

@@ -8,7 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
-from core.technicals import calc_sma, calc_macd
+from core.technicals import calc_ema, calc_sma, calc_macd
 from db import CacheMeta, Price, get_db
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,7 @@ async def get_indicators(
     symbol: str,
     interval: str = None,
     ma:   list[int] = Query(default=[]),   # ?ma=20&ma=50
+    ema:  list[int] = Query(default=[]),   # ?ema=3&ema=5
     macd: list[str] = Query(default=[]),   # ?macd=12,26,9
     db: AsyncSession = Depends(get_db),
 ):
@@ -217,12 +218,19 @@ async def get_indicators(
     closes = np.array([r.close for r in rows], dtype=np.float64)
     times  = [to_chart_time(r.ts) for r in rows]
 
-    # ── Moving averages ───────────────────────────────────────────────────────
+    # ── Simple Moving Averages ────────────────────────────────────────────────
     ma_out: dict = {}
     for period in set(ma):
         if period < 1 or len(closes) < period:
             continue
         ma_out[str(period)] = calc_sma(closes, period, times)
+
+    # ── Exponential Moving Averages ───────────────────────────────────────────
+    ema_out: dict = {}
+    for period in set(ema):
+        if period < 1 or len(closes) < period:
+            continue
+        ema_out[str(period)] = calc_ema(closes, period, times)
 
     # ── MACD ──────────────────────────────────────────────────────────────────
     macd_out: dict = {}
@@ -236,7 +244,8 @@ async def get_indicators(
             continue
         macd_out[param] = calc_macd(closes, fast, slow, sig, times)
 
-    return {"symbol": sym, "interval": yf_interval, "ma": ma_out, "macd": macd_out}
+    return {"symbol": sym, "interval": yf_interval,
+            "ma": ma_out, "ema": ema_out, "macd": macd_out}
 
 
 @router.get("/{symbol}/info")

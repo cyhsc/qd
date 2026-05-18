@@ -68,6 +68,30 @@ function MARow({ ma, onUpdate, onRemove }) {
   )
 }
 
+// ── Guppy row ─────────────────────────────────────────────────────────────────
+
+function GuppyRow({ guppy, onUpdate, onRemove }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+      <div style={{
+        width: '10px', height: '10px', borderRadius: '2px',
+        background: `linear-gradient(to bottom, ${guppy.shortColor} 50%, ${guppy.longColor} 50%)`,
+        flexShrink: 0,
+      }} />
+      <input type="color" value={guppy.shortColor} title="Short group color"
+        onChange={e => onUpdate({ shortColor: e.target.value })}
+        style={{ ...colorPickerStyle, width: '28px' }} />
+      <input type="color" value={guppy.longColor} title="Long group color"
+        onChange={e => onUpdate({ longColor: e.target.value })}
+        style={{ ...colorPickerStyle, width: '28px' }} />
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)', flex: 1 }}>
+        3–34 / 55–610
+      </span>
+      <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
+    </div>
+  )
+}
+
 // ── MACD row ──────────────────────────────────────────────────────────────────
 
 function MACDRow({ macd, onUpdate, onRemove }) {
@@ -151,7 +175,7 @@ function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeader
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange }) {
+export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange }) {
   const [open, setOpen] = useState(false)
   const panelRef        = useRef(null)
   const btnRef          = useRef(null)
@@ -174,6 +198,14 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeMA  = id     => onMaChange(maConfigs.filter(m => m.id !== id))
   const updateMA  = (id, up) => onMaChange(maConfigs.map(m => m.id === id ? { ...m, ...up } : m))
 
+  // Guppy handlers
+  const addGuppy    = () => onGuppyChange([
+    ...guppyConfigs,
+    { id: Date.now().toString(), shortColor: '#ef5350', longColor: '#2962ff' },
+  ])
+  const removeGuppy = id     => onGuppyChange(guppyConfigs.filter(g => g.id !== id))
+  const updateGuppy = (id, up) => onGuppyChange(guppyConfigs.map(g => g.id === id ? { ...g, ...up } : g))
+
   // MACD handlers
   const addMACD  = () => onMacdChange([
     ...macdConfigs,
@@ -183,7 +215,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeMACD  = id     => onMacdChange(macdConfigs.filter(m => m.id !== id))
   const updateMACD  = (id, up) => onMacdChange(macdConfigs.map(m => m.id === id ? { ...m, ...up } : m))
 
-  const totalCount = maConfigs.length + macdConfigs.length
+  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length
   const btnLabel   = totalCount > 0 ? `Indicators (${totalCount})` : 'Indicators'
 
   return (
@@ -237,6 +269,28 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
               <MARow key={ma.id} ma={ma}
                 onUpdate={up => updateMA(ma.id, up)}
                 onRemove={() => removeMA(ma.id)} />
+            ))}
+          </IndicatorSection>
+
+          {/* ── Divider ── */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+
+          {/* ── Guppy MMA ── */}
+          <IndicatorSection
+            label="Guppy MMA"
+            count={guppyConfigs.length}
+            addLabel="Add Guppy"
+            onAdd={addGuppy}
+            colHeaders={guppyConfigs.length > 0 ? [
+              { label: 'Short', width: '28px' },
+              { label: 'Long',  width: '28px' },
+            ] : null}
+            colHeaderIndent="16px"
+          >
+            {guppyConfigs.map(g => (
+              <GuppyRow key={g.id} guppy={g}
+                onUpdate={up => updateGuppy(g.id, up)}
+                onRemove={() => removeGuppy(g.id)} />
             ))}
           </IndicatorSection>
 
