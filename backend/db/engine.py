@@ -3,7 +3,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-DB_PATH = Path(__file__).parent.parent / "qd.db"
+DB_PATH = Path(__file__).parent / "qd.db"
 
 engine = create_async_engine(f"sqlite+aiosqlite:///{DB_PATH}", echo=False)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
