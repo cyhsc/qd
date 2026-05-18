@@ -1,7 +1,7 @@
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -191,6 +191,103 @@ async def get_history(
 
     return {"symbol": sym, "range": range_key, "interval": yf_interval,
             "candles": candles, "volume": volume}
+
+
+# ── Indicator math ────────────────────────────────────────────────────────────
+
+def _sma(closes: list, period: int) -> list:
+    out = []
+    for i in range(period - 1, len(closes)):
+        out.append(sum(closes[i - period + 1 : i + 1]) / period)
+    return out                                  # length = len(closes) - period + 1
+
+
+def _ema(closes: list, period: int) -> list:
+    """Returns a list aligned with `closes`; first (period-1) entries are None."""
+    if len(closes) < period:
+        return [None] * len(closes)
+    k   = 2 / (period + 1)
+    out = [None] * (period - 1)
+    ema = sum(closes[:period]) / period
+    out.append(ema)
+    for c in closes[period:]:
+        ema = c * k + ema * (1 - k)
+        out.append(ema)
+    return out
+
+
+# ── Indicators endpoint ───────────────────────────────────────────────────────
+
+@router.get("/{symbol}/indicators")
+async def get_indicators(
+    symbol: str,
+    interval: str = None,
+    ma:   list[int] = Query(default=[]),   # ?ma=20&ma=50
+    macd: list[str] = Query(default=[]),   # ?macd=12,26,9
+    db: AsyncSession = Depends(get_db),
+):
+    sym         = symbol.upper()
+    yf_interval = INTERVAL_MAP.get(interval) if interval else "1d"
+    if interval and yf_interval is None:
+        raise HTTPException(status_code=400, detail=f"Invalid interval.")
+
+    rows = await read_cached_prices(db, sym, yf_interval)
+    if not rows:
+        return {"symbol": sym, "interval": yf_interval, "ma": {}, "macd": {}}
+
+    closes = [r.close for r in rows]
+    times  = [to_chart_time(r.ts) for r in rows]
+
+    # ── Moving averages ────────────────────────────────────────────────────────
+    ma_out: dict = {}
+    for period in set(ma):
+        if period < 1 or len(closes) < period:
+            continue
+        vals = _sma(closes, period)
+        offset = len(closes) - len(vals)           # = period - 1
+        ma_out[str(period)] = [
+            {"time": times[offset + i], "value": round(v, 4)}
+            for i, v in enumerate(vals)
+        ]
+
+    # ── MACD ──────────────────────────────────────────────────────────────────
+    macd_out: dict = {}
+    for param in set(macd):
+        parts = param.split(",")
+        if len(parts) != 3:
+            continue
+        try:
+            fast, slow, sig = int(parts[0]), int(parts[1]), int(parts[2])
+        except ValueError:
+            continue
+
+        fast_ema = _ema(closes, fast)
+        slow_ema = _ema(closes, slow)
+
+        macd_vals, macd_times = [], []
+        for i in range(slow - 1, len(closes)):
+            if fast_ema[i] is not None and slow_ema[i] is not None:
+                macd_vals.append(fast_ema[i] - slow_ema[i])
+                macd_times.append(times[i])
+
+        sig_ema = _ema(macd_vals, sig)
+
+        macd_line, signal_line, histogram = [], [], []
+        for i, (t, m) in enumerate(zip(macd_times, macd_vals)):
+            macd_line.append({"time": t, "value": round(m, 6)})
+            if sig_ema[i] is not None:
+                s = sig_ema[i]
+                h = m - s
+                signal_line.append({"time": t, "value": round(s, 6)})
+                histogram.append({"time": t, "value": round(h, 6)})
+
+        macd_out[param] = {
+            "macd_line":   macd_line,
+            "signal_line": signal_line,
+            "histogram":   histogram,
+        }
+
+    return {"symbol": sym, "interval": yf_interval, "ma": ma_out, "macd": macd_out}
 
 
 @router.get("/{symbol}/info")

@@ -75,6 +75,9 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('qd_macd_configs') ?? 'null') ?? [] }
     catch { return [] }
   })
+  // Pre-calculated indicator data from backend
+  const [maData,   setMaData]   = useState({})
+  const [macdData, setMacdData] = useState({})
 
   // Watchlist state
   const [watchlists,    setWatchlists]    = useState([])
@@ -143,6 +146,33 @@ export default function App() {
       setLoading(false)
     }
   }, [])
+
+  // ── Fetch indicator data ──────────────────────────────────────────────────
+  // Runs after history is loaded (candles dep ensures cache is warm).
+  // Clears stale data immediately so the chart doesn't show old indicators
+  // for a new symbol while the fetch is in flight.
+
+  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs) => {
+    if (!sym || (!maCfgs.length && !macdCfgs.length)) {
+      setMaData({}); setMacdData({}); return
+    }
+    const params = new URLSearchParams()
+    if (ivl) params.set('interval', ivl)
+    maCfgs.forEach(m   => params.append('ma',   m.period))
+    macdCfgs.forEach(m => params.append('macd', `${m.fast},${m.slow},${m.signal}`))
+    try {
+      const res = await fetch(`/api/stocks/${sym}/indicators?${params}`)
+      if (!res.ok) return
+      const data = await res.json()
+      setMaData(data.ma   ?? {})
+      setMacdData(data.macd ?? {})
+    } catch { /* indicators are optional */ }
+  }, [])
+
+  useEffect(() => {
+    if (!symbol || !candles) { setMaData({}); setMacdData({}); return }
+    fetchIndicators(symbol, interval, maConfigs, macdConfigs)
+  }, [symbol, interval, maConfigs, macdConfigs, candles, fetchIndicators])
 
   // ── Toolbar handlers ──────────────────────────────────────────────────────
 
@@ -380,10 +410,10 @@ export default function App() {
           )}
           {candles && !loading && (
             <StockChart
-              candles={candles} volume={volume}
+              candles={candles}    volume={volume}
               visibleDays={RANGE_DAYS[range]}
-              maConfigs={maConfigs}
-              macdConfigs={macdConfigs}
+              maConfigs={maConfigs}    maData={maData}
+              macdConfigs={macdConfigs} macdData={macdData}
             />
           )}
         </main>
