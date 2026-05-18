@@ -168,7 +168,7 @@ async def get_history(
     logger.info("Cache MISS %s | %s — fetching period=%s", sym, yf_interval, max_period)
 
     ticker = yf.Ticker(sym)
-    hist = ticker.history(period=max_period, interval=yf_interval)
+    hist = ticker.history(period=max_period, interval=yf_interval, auto_adjust=False)
     if hist.empty:
         raise HTTPException(status_code=404, detail=f"No data found for symbol '{symbol}'")
 
