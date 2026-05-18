@@ -3,8 +3,8 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 
 // ── Guppy period groups ───────────────────────────────────────────────────────
 
-const GUPPY_SHORT = [3, 5, 8, 13, 21, 34]
-const GUPPY_LONG  = [55, 89, 144, 233, 377, 610]
+const GUPPY_SHORT = [3, 5, 8, 10, 12, 15]
+const GUPPY_LONG  = [30, 35, 40, 45, 50, 60]
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -94,9 +94,9 @@ export function StockChart({
   maConfigs    = [],
   macdConfigs  = [],
   guppyConfigs = [],
-  maData       = {},   // { "20": [{time,value}, ...] }
-  emaData      = {},   // { "3": [{time,value}, ...], "55": [...], ... }
-  macdData     = {},   // { "12,26,9": { macd_line, signal_line, histogram } }
+  maData       = {},    // { "20": [{time,value}, ...] }
+  guppyData    = null,  // { short: {"3": [...], ...}, long: {"30": [...], ...} }
+  macdData     = {},    // { "12,26,9": { macd_line, signal_line, histogram } }
 }) {
   const containerRef   = useRef(null)
   const chartRef       = useRef(null)
@@ -438,13 +438,14 @@ export function StockChart({
         for (const p of GUPPY_LONG)  seriesByPeriod.get(p)?.applyOptions({ color: cfg.longColor })
       }
 
-      // Set data for each period from emaData
+      // Set data from backend guppyData: { short: {period: [...]}, long: {...} }
       const seriesByPeriod = map.get(cfg.id)
-      for (const [period, series] of seriesByPeriod) {
-        series.setData(emaData[String(period)] ?? [])
-      }
+      const shortData = guppyData?.short ?? {}
+      const longData  = guppyData?.long  ?? {}
+      for (const p of GUPPY_SHORT) seriesByPeriod.get(p)?.setData(shortData[String(p)] ?? [])
+      for (const p of GUPPY_LONG)  seriesByPeriod.get(p)?.setData(longData[String(p)]  ?? [])
     }
-  }, [guppyConfigs, emaData])
+  }, [guppyConfigs, guppyData])
 
   // ── Render ────────────────────────────────────────────────────────────────
 

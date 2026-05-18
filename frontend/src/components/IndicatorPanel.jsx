@@ -85,7 +85,7 @@ function GuppyRow({ guppy, onUpdate, onRemove }) {
         onChange={e => onUpdate({ longColor: e.target.value })}
         style={{ ...colorPickerStyle, width: '28px' }} />
       <span style={{ fontSize: '10px', color: 'var(--text-muted)', flex: 1 }}>
-        3–34 / 55–610
+        3–15 / 30–60
       </span>
       <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
     </div>

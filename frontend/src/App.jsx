@@ -80,9 +80,9 @@ export default function App() {
     catch { return [] }
   })
   // Pre-calculated indicator data from backend
-  const [maData,   setMaData]   = useState({})
-  const [emaData,  setEmaData]  = useState({})
-  const [macdData, setMacdData] = useState({})
+  const [maData,    setMaData]    = useState({})
+  const [guppyData, setGuppyData] = useState(null)
+  const [macdData,  setMacdData]  = useState({})
 
   // Watchlist state
   const [watchlists,    setWatchlists]    = useState([])
@@ -164,29 +164,25 @@ export default function App() {
   const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, guppyCfgs) => {
     const hasAny = maCfgs.length || macdCfgs.length || guppyCfgs.length
     if (!sym || !hasAny) {
-      setMaData({}); setEmaData({}); setMacdData({}); return
+      setMaData({}); setGuppyData(null); setMacdData({}); return
     }
     const params = new URLSearchParams()
     if (ivl) params.set('interval', ivl)
     maCfgs.forEach(m   => params.append('ma',   m.period))
     macdCfgs.forEach(m => params.append('macd', `${m.fast},${m.slow},${m.signal}`))
-    if (guppyCfgs.length) {
-      // Request all 12 Guppy EMA periods in one call
-      ;[3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610]
-        .forEach(p => params.append('ema', p))
-    }
+    if (guppyCfgs.length) params.set('guppy', '1')
     try {
       const res = await fetch(`/api/stocks/${sym}/indicators?${params}`)
       if (!res.ok) return
       const data = await res.json()
-      setMaData(data.ma   ?? {})
-      setEmaData(data.ema  ?? {})
-      setMacdData(data.macd ?? {})
+      setMaData(data.ma      ?? {})
+      setGuppyData(data.guppy ?? null)
+      setMacdData(data.macd  ?? {})
     } catch { /* indicators are optional */ }
   }, [])
 
   useEffect(() => {
-    if (!symbol || !candles) { setMaData({}); setEmaData({}); setMacdData({}); return }
+    if (!symbol || !candles) { setMaData({}); setGuppyData(null); setMacdData({}); return }
     fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs)
   }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, candles, fetchIndicators])
 
@@ -431,7 +427,7 @@ export default function App() {
               visibleDays={RANGE_DAYS[range]}
               maConfigs={maConfigs}       maData={maData}
               macdConfigs={macdConfigs}   macdData={macdData}
-              guppyConfigs={guppyConfigs} emaData={emaData}
+              guppyConfigs={guppyConfigs} guppyData={guppyData}
             />
           )}
         </main>

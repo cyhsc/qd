@@ -76,3 +76,31 @@ def calc_macd(
         "signal_line": signal_line,
         "histogram":   histogram,
     }
+
+
+# ── Guppy Multiple Moving Average ─────────────────────────────────────────────
+
+GUPPY_SHORT = [3, 5, 8, 10, 12, 15]
+GUPPY_LONG  = [30, 35, 40, 45, 50, 60]
+
+
+def calc_guppy(closes: np.ndarray, times: list) -> dict:
+    """Guppy Multiple Moving Average (GMMA).
+
+    Returns a dict with two keys:
+    - ``short`` – EMAs for periods 3, 5, 8, 10, 12, 15
+    - ``long``  – EMAs for periods 30, 35, 40, 45, 50, 60
+
+    Each value is itself a dict keyed by period string, e.g.
+    ``{"3": [{time, value}, ...], "5": [...], ...}``.
+    """
+    return {
+        "short": {
+            str(p): calc_ema(closes, p, times)
+            for p in GUPPY_SHORT if len(closes) >= p
+        },
+        "long": {
+            str(p): calc_ema(closes, p, times)
+            for p in GUPPY_LONG if len(closes) >= p
+        },
+    }

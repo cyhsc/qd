@@ -8,7 +8,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
-from core.technicals import calc_ema, calc_sma, calc_macd
+from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy
 from db import CacheMeta, Price, get_db
 
 logger = logging.getLogger(__name__)
@@ -201,9 +201,10 @@ async def get_history(
 async def get_indicators(
     symbol: str,
     interval: str = None,
-    ma:   list[int] = Query(default=[]),   # ?ma=20&ma=50
-    ema:  list[int] = Query(default=[]),   # ?ema=3&ema=5
-    macd: list[str] = Query(default=[]),   # ?macd=12,26,9
+    ma:    list[int] = Query(default=[]),   # ?ma=20&ma=50
+    ema:   list[int] = Query(default=[]),   # ?ema=3&ema=5
+    macd:  list[str] = Query(default=[]),   # ?macd=12,26,9
+    guppy: bool      = Query(default=False),# ?guppy=1
     db: AsyncSession = Depends(get_db),
 ):
     sym         = symbol.upper()
@@ -244,8 +245,11 @@ async def get_indicators(
             continue
         macd_out[param] = calc_macd(closes, fast, slow, sig, times)
 
+    guppy_out = calc_guppy(closes, times) if guppy else None
+
     return {"symbol": sym, "interval": yf_interval,
-            "ma": ma_out, "ema": ema_out, "macd": macd_out}
+            "ma": ma_out, "ema": ema_out, "macd": macd_out,
+            "guppy": guppy_out}
 
 
 @router.get("/{symbol}/info")
