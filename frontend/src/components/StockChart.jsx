@@ -2,22 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-//
-// Single chart instance — scaleMargins controls which vertical slice each
-// price scale occupies.  Time axis is shared; no sync code needed.
 
-const SPLIT = 0.65   // fraction of canvas height for the price pane
+const SPLIT_DEFAULT = 0.65
+const SPLIT_MIN     = 0.20
+const SPLIT_MAX     = 0.85
 
-const MARGINS = {
-  main: {
-    solo:     { top: 0.05, bottom: 0.22 },
-    withMacd: { top: 0.03, bottom: 0.38 },
-  },
-  vol: {
-    solo:     { top: 0.80, bottom: 0.00 },
-    withMacd: { top: 0.55, bottom: 0.36 },
-  },
-  macd: { top: SPLIT + 0.03, bottom: 0.02 },
+// Static margins used when no MACD pane is visible
+const MARGINS_SOLO = {
+  main: { top: 0.05, bottom: 0.22 },
+  vol:  { top: 0.80, bottom: 0.00 },
+}
+
+// Dynamic margins computed from the current split position
+function splitMargins(split) {
+  return {
+    main: { top: 0.03, bottom: (1 - split) + 0.03 },
+    vol:  { top: split - 0.10, bottom: (1 - split) + 0.01 },
+    macd: { top: split + 0.03, bottom: 0.02 },
+  }
 }
 
 // ── Chart options ─────────────────────────────────────────────────────────────
@@ -39,7 +41,7 @@ const CHART_OPTS = {
   },
   rightPriceScale: {
     borderColor:  '#2a2e39',
-    scaleMargins: MARGINS.main.solo,
+    scaleMargins: MARGINS_SOLO.main,
   },
 }
 
@@ -103,10 +105,44 @@ export function StockChart({
   const macdSeriesMap = useRef(new Map())
   const macdLastRef   = useRef({})
   const macdByTimeRef = useRef({})
+  // Reference to any live MACD histogram series — used to update the
+  // 'macd' overlay price-scale margins without relying on chart.priceScale().
+  const macdScaleRef  = useRef(null)
 
   const [hover,      setHover]      = useState(null)
   const [maLegend,   setMaLegend]   = useState({})
   const [macdLegend, setMacdLegend] = useState({})
+
+  // ── Draggable split ───────────────────────────────────────────────────────
+  const [split,       setSplit]       = useState(SPLIT_DEFAULT)
+  const [isDragging,  setIsDragging]  = useState(false)
+  const splitRef      = useRef(SPLIT_DEFAULT)   // always in sync with split state
+  const isDraggingRef = useRef(false)
+
+  // Keep ref in sync (used by effects whose deps don't include split)
+  useEffect(() => { splitRef.current = split }, [split])
+
+  // Attach global drag handlers once; use refs to stay out of the dep array
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!isDraggingRef.current || !containerRef.current) return
+      const rect     = containerRef.current.getBoundingClientRect()
+      const newSplit = Math.max(SPLIT_MIN, Math.min(SPLIT_MAX,
+        (e.clientY - rect.top) / rect.height))
+      setSplit(newSplit)
+    }
+    const onUp = () => {
+      if (!isDraggingRef.current) return
+      isDraggingRef.current = false
+      setIsDragging(false)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup',   onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup',   onUp)
+    }
+  }, [])
 
   const hasMacd = macdConfigs.length > 0
 
@@ -134,7 +170,7 @@ export function StockChart({
       priceFormat: { type: 'volume' },
       priceScaleId: 'vol',
     })
-    chart.priceScale('vol').applyOptions({ scaleMargins: MARGINS.vol.solo })
+    chart.priceScale('vol').applyOptions({ scaleMargins: MARGINS_SOLO.vol })
 
     chart.subscribeCrosshairMove(param => {
       if (param.logical == null || !param.seriesData?.size) {
@@ -179,8 +215,7 @@ export function StockChart({
       chartRef.current  = null
       candleRef.current = null
       volumeRef.current = null
-      // Clear series maps so the StrictMode double-mount (or any remount) starts
-      // fresh — stale series references from a destroyed chart silently fail.
+      macdScaleRef.current = null
       maSeriesMap.current.clear()
       macdSeriesMap.current.clear()
       maLastValsRef.current  = {}
@@ -189,17 +224,20 @@ export function StockChart({
     }
   }, [])
 
-  // ── Adjust scale margins when MACD pane appears / disappears ─────────────
+  // ── Update scale margins whenever split or MACD visibility changes ────────
 
   useEffect(() => {
     if (!chartRef.current) return
-    chartRef.current.priceScale('right').applyOptions({
-      scaleMargins: hasMacd ? MARGINS.main.withMacd : MARGINS.main.solo,
-    })
-    chartRef.current.priceScale('vol').applyOptions({
-      scaleMargins: hasMacd ? MARGINS.vol.withMacd : MARGINS.vol.solo,
-    })
-  }, [hasMacd])
+    if (hasMacd) {
+      const m = splitMargins(split)
+      chartRef.current.priceScale('right').applyOptions({ scaleMargins: m.main })
+      chartRef.current.priceScale('vol').applyOptions({   scaleMargins: m.vol  })
+      macdScaleRef.current?.priceScale().applyOptions({   scaleMargins: m.macd })
+    } else {
+      chartRef.current.priceScale('right').applyOptions({ scaleMargins: MARGINS_SOLO.main })
+      chartRef.current.priceScale('vol').applyOptions({   scaleMargins: MARGINS_SOLO.vol  })
+    }
+  }, [split, hasMacd])
 
   // ── Load candle + volume data ─────────────────────────────────────────────
 
@@ -226,7 +264,7 @@ export function StockChart({
     applyVisibleRange(chartRef.current, candlesRef.current, visibleDays)
   }, [visibleDays])
 
-  // ── MA series (data from backend) ─────────────────────────────────────────
+  // ── MA series ─────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -234,7 +272,6 @@ export function StockChart({
     const map      = maSeriesMap.current
     const incoming = new Set(maConfigs.map(m => m.id))
 
-    // Remove stale series
     for (const [id, series] of map) {
       if (!incoming.has(id)) {
         chart.removeSeries(series)
@@ -244,7 +281,6 @@ export function StockChart({
     }
 
     for (const ma of maConfigs) {
-      // Create series if new
       if (!map.has(ma.id)) {
         map.set(ma.id, chart.addLineSeries({
           color: ma.color, lineWidth: ma.width,
@@ -253,20 +289,17 @@ export function StockChart({
       } else {
         map.get(ma.id).applyOptions({ color: ma.color, lineWidth: ma.width })
       }
-
-      // Set data from backend payload; key is the period as a string
       const data = maData[String(ma.period)] ?? []
       map.get(ma.id).setData(data)
       if (data.length) maLastValsRef.current[ma.id] = data[data.length - 1].value
     }
 
-    // Purge last-vals for removed configs
     for (const id of Object.keys(maLastValsRef.current))
       if (!incoming.has(id)) delete maLastValsRef.current[id]
     setMaLegend({ ...maLastValsRef.current })
   }, [maConfigs, maData])
 
-  // ── MACD series (data from backend) ──────────────────────────────────────
+  // ── MACD series ───────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!chartRef.current) return
@@ -274,7 +307,6 @@ export function StockChart({
     const map      = macdSeriesMap.current
     const incoming = new Set(macdConfigs.map(m => m.id))
 
-    // Remove stale series
     for (const [id, s] of map) {
       if (!incoming.has(id)) {
         chart.removeSeries(s.macd)
@@ -285,10 +317,10 @@ export function StockChart({
         delete macdByTimeRef.current[id]
       }
     }
+    if (macdConfigs.length === 0) macdScaleRef.current = null
 
     for (const cfg of macdConfigs) {
       if (!map.has(cfg.id)) {
-        // ── Create the three MACD series ──────────────────────────────────
         const histSeries = chart.addHistogramSeries({
           priceScaleId: 'macd',
           priceLineVisible: false, lastValueVisible: false,
@@ -305,25 +337,26 @@ export function StockChart({
         })
         map.set(cfg.id, { macd: macdSeries, signal: signalSeries, histogram: histSeries })
 
-        // Apply scale margins via the series instance — more reliable than
-        // chart.priceScale('macd') for custom overlay scales in v4
-        histSeries.priceScale().applyOptions({ scaleMargins: MARGINS.macd })
+        // Use splitRef so we get the live split without adding split to deps
+        histSeries.priceScale().applyOptions({
+          scaleMargins: splitMargins(splitRef.current).macd,
+        })
+        // Keep a ref to this series for future scale-margin updates
+        if (!macdScaleRef.current) macdScaleRef.current = histSeries
       } else {
         const s = map.get(cfg.id)
         s.macd.applyOptions({ color: cfg.macdColor })
         s.signal.applyOptions({ color: cfg.signalColor })
       }
 
-      // ── Populate from backend payload ─────────────────────────────────
       const key = `${cfg.fast},${cfg.slow},${cfg.signal}`
       const d   = macdData[key]
-      if (!d) continue   // not yet fetched — leave series empty for now
+      if (!d) continue
 
       const macdLine   = d.macd_line   ?? []
       const signalLine = d.signal_line ?? []
       const rawHist    = d.histogram   ?? []
 
-      // Add bar colours (backend sends plain {time, value})
       const histogram = rawHist.map(p => ({
         ...p, color: p.value >= 0 ? '#26a69a' : '#ef5350',
       }))
@@ -333,7 +366,6 @@ export function StockChart({
       s.macd.setData(macdLine)
       s.signal.setData(signalLine)
 
-      // Build time-keyed lookup for crosshair legend
       const byTime = new Map()
       for (let i = 0; i < signalLine.length; i++) {
         const mi = macdLine.length - signalLine.length + i
@@ -363,7 +395,8 @@ export function StockChart({
   const clr  = isUp ? '#26a69a' : '#ef5350'
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%',
+                  userSelect: isDragging ? 'none' : 'auto' }}>
 
       {/* OHLCV overlay */}
       <div style={{
@@ -412,20 +445,31 @@ export function StockChart({
         </div>
       )}
 
-      {/* Separator */}
+      {/* Draggable separator — only shown when MACD pane is visible */}
       {hasMacd && (
-        <div style={{
-          position: 'absolute', zIndex: 2, pointerEvents: 'none',
-          top: `${SPLIT * 100}%`, left: 0, right: 0, height: '1px',
-          background: 'var(--border)',
-        }} />
+        <div
+          onMouseDown={e => {
+            e.preventDefault()
+            isDraggingRef.current = true
+            setIsDragging(true)
+          }}
+          style={{
+            position: 'absolute', zIndex: 20,
+            top: `${split * 100}%`, left: 0, right: 0,
+            height: '5px',
+            transform: 'translateY(-2px)',
+            cursor: 'row-resize',
+            background: isDragging ? 'var(--blue, #2962ff)' : 'var(--border)',
+            transition: isDragging ? 'none' : 'background 0.15s',
+          }}
+        />
       )}
 
       {/* MACD legend */}
       {hasMacd && (
         <div style={{
           position: 'absolute', zIndex: 10, pointerEvents: 'none',
-          top: `calc(${SPLIT * 100}% + 6px)`, left: 12,
+          top: `calc(${split * 100}% + 8px)`, left: 12,
           display: 'flex', flexWrap: 'wrap', gap: '14px',
           fontSize: '11px', fontFamily: 'var(--font-mono)',
         }}>
@@ -447,7 +491,7 @@ export function StockChart({
         </div>
       )}
 
-      {/* Single chart canvas */}
+      {/* Chart canvas */}
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
     </div>
   )
