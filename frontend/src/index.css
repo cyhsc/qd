@@ -1,20 +1,33 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-void:     #0d1117;
-  --bg-base:     #131722;
-  --bg-panel:    #1e222d;
-  --bg-raised:   #2a2e39;
-  --border:      #2a2e39;
-  --border-dim:  #1e222d;
-  --text-primary: #d1d4dc;
+  /* Light theme (default) */
+  --bg-void:        #f0f3fa;
+  --bg-base:        #ffffff;
+  --bg-panel:       #f8f9fb;
+  --bg-raised:      #f0f3fa;
+  --border:         #e0e3eb;
+  --border-dim:     #f0f3fa;
+  --text-primary:   #131722;
+  --text-secondary: #434651;
+  --text-muted:     #9598a1;
+  --green:          #26a69a;
+  --red:            #ef5350;
+  --blue:           #2962ff;
+  --font-ui:        -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:      'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+[data-theme="dark"] {
+  --bg-void:        #0d1117;
+  --bg-base:        #131722;
+  --bg-panel:       #1e222d;
+  --bg-raised:      #2a2e39;
+  --border:         #2a2e39;
+  --border-dim:     #1e222d;
+  --text-primary:   #d1d4dc;
   --text-secondary: #9598a1;
-  --text-muted:  #5d606b;
-  --green:       #26a69a;
-  --red:         #ef5350;
-  --blue:        #2962ff;
-  --font-ui:     -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono:   'SF Mono', 'Fira Code', 'Consolas', monospace;
+  --text-muted:     #5d606b;
 }
 
 html, body, #root {

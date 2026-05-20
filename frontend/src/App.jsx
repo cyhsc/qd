@@ -57,6 +57,20 @@ function loadActiveListId() {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  // Theme — applied immediately so there's no flash on load
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem('qd_theme') ?? 'light'
+    document.documentElement.dataset.theme = saved
+    return saved
+  })
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('qd_theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light')
+
   // Chart state
   const [input,     setInput]     = useState('')
   const [symbol,    setSymbol]    = useState('')
@@ -79,10 +93,20 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('qd_guppy_configs') ?? 'null') ?? [] }
     catch { return [] }
   })
+  const [rwbConfigs, setRwbConfigs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('qd_rwb_configs') ?? 'null') ?? [] }
+    catch { return [] }
+  })
+  const [squeezeConfigs, setSqueezeConfigs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('qd_squeeze_configs') ?? 'null') ?? [] }
+    catch { return [] }
+  })
   // Pre-calculated indicator data from backend
-  const [maData,    setMaData]    = useState({})
-  const [guppyData, setGuppyData] = useState(null)
-  const [macdData,  setMacdData]  = useState({})
+  const [maData,      setMaData]      = useState({})
+  const [guppyData,   setGuppyData]   = useState(null)
+  const [macdData,    setMacdData]    = useState({})
+  const [rwbData,     setRwbData]     = useState(null)
+  const [squeezeData, setSqueezeData] = useState(null)
 
   // Watchlist state
   const [watchlists,    setWatchlists]    = useState([])
@@ -118,6 +142,14 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('qd_guppy_configs', JSON.stringify(guppyConfigs))
   }, [guppyConfigs])
+
+  useEffect(() => {
+    localStorage.setItem('qd_rwb_configs', JSON.stringify(rwbConfigs))
+  }, [rwbConfigs])
+
+  useEffect(() => {
+    localStorage.setItem('qd_squeeze_configs', JSON.stringify(squeezeConfigs))
+  }, [squeezeConfigs])
 
   // ── Fetch chart data ──────────────────────────────────────────────────────
 
@@ -161,30 +193,36 @@ export default function App() {
   // Clears stale data immediately so the chart doesn't show old indicators
   // for a new symbol while the fetch is in flight.
 
-  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, guppyCfgs) => {
-    const hasAny = maCfgs.length || macdCfgs.length || guppyCfgs.length
+  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, guppyCfgs, rwbCfgs, sqzCfgs) => {
+    const hasAny = maCfgs.length || macdCfgs.length || guppyCfgs.length || rwbCfgs.length || sqzCfgs.length
     if (!sym || !hasAny) {
-      setMaData({}); setGuppyData(null); setMacdData({}); return
+      setMaData({}); setGuppyData(null); setMacdData({}); setRwbData(null); setSqueezeData(null); return
     }
     const params = new URLSearchParams()
     if (ivl) params.set('interval', ivl)
     maCfgs.forEach(m   => params.append('ma',   m.period))
     macdCfgs.forEach(m => params.append('macd', `${m.fast},${m.slow},${m.signal}`))
-    if (guppyCfgs.length) params.set('guppy', '1')
+    if (guppyCfgs.length) params.set('guppy',   '1')
+    if (rwbCfgs.length)   params.set('rwb',     '1')
+    if (sqzCfgs.length)   params.set('squeeze', '1')
     try {
       const res = await fetch(`/api/stocks/${sym}/indicators?${params}`)
       if (!res.ok) return
       const data = await res.json()
-      setMaData(data.ma      ?? {})
-      setGuppyData(data.guppy ?? null)
-      setMacdData(data.macd  ?? {})
+      setMaData(data.ma         ?? {})
+      setGuppyData(data.guppy   ?? null)
+      setMacdData(data.macd     ?? {})
+      setRwbData(data.rwb       ?? null)
+      setSqueezeData(data.squeeze ?? null)
     } catch { /* indicators are optional */ }
   }, [])
 
   useEffect(() => {
-    if (!symbol || !candles) { setMaData({}); setGuppyData(null); setMacdData({}); return }
-    fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs)
-  }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, candles, fetchIndicators])
+    if (!symbol || !candles) {
+      setMaData({}); setGuppyData(null); setMacdData({}); setRwbData(null); setSqueezeData(null); return
+    }
+    fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs)
+  }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, candles, fetchIndicators])
 
   // ── Toolbar handlers ──────────────────────────────────────────────────────
 
@@ -262,6 +300,36 @@ export default function App() {
     setActiveListId(newList.id)
   }, [])
 
+  // Creates a new list and writes symbols straight to the DB — no yfinance calls.
+  // Invalid symbols are surfaced later when the user clicks them (chart error banner).
+  const handleImportList = useCallback(async (name, symbols, onProgress) => {
+    const newList = await wlApi.createList(name)
+    // Show the empty list immediately so the tab appears
+    setWatchlists(prev => [...prev, { ...newList, symbols: [] }])
+    setActiveListId(newList.id)
+
+    let done = 0, failed = 0
+    const added = []
+
+    // Pure DB inserts — all in parallel, no yfinance
+    await Promise.all(symbols.map(async sym => {
+      try {
+        const r = await wlApi.addSymbol(newList.id, sym, sym)
+        if (r.ok) added.push({ symbol: sym, name: sym })
+        else if (r.status !== 409) failed++   // 409 = duplicate, not a real failure
+      } catch {
+        failed++
+      }
+      done++
+      onProgress(done, symbols.length, failed)
+    }))
+
+    // One state update with all successfully inserted symbols
+    setWatchlists(prev => prev.map(l =>
+      l.id !== newList.id ? l : { ...l, symbols: added }
+    ))
+  }, [])
+
   const handleDeleteList = useCallback(async (id) => {
     // Optimistic update
     setWatchlists(prev => {
@@ -289,6 +357,7 @@ export default function App() {
         loading={wlLoading}
         onSelectList={setActiveListId}
         onCreateList={handleCreateList}
+        onImportList={handleImportList}
         onDeleteList={handleDeleteList}
         onSelectSymbol={selectSymbol}
         onDeleteSymbol={handleDeleteSymbol}
@@ -363,7 +432,41 @@ export default function App() {
               maConfigs={maConfigs}       onMaChange={setMaConfigs}
               macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
               guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
+              rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
+              squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
             />
+            <button
+              onClick={toggleTheme}
+              title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+              style={{
+                width: '28px', height: '28px', padding: 0,
+                border: 'none', borderRadius: '5px',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'color 0.15s',
+              }}
+            >
+              {theme === 'light' ? (
+                /* Moon icon */
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+              ) : (
+                /* Sun icon */
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="12" r="5"/>
+                  <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              )}
+            </button>
           </div>
         </div>
 
@@ -425,9 +528,12 @@ export default function App() {
             <StockChart
               candles={candles}    volume={volume}
               visibleDays={RANGE_DAYS[range]}
+              theme={theme}
               maConfigs={maConfigs}       maData={maData}
               macdConfigs={macdConfigs}   macdData={macdData}
               guppyConfigs={guppyConfigs} guppyData={guppyData}
+              rwbConfigs={rwbConfigs}         rwbData={rwbData}
+              squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
             />
           )}
         </main>

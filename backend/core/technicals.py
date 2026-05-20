@@ -84,6 +84,12 @@ GUPPY_SHORT = [3, 5, 8, 10, 12, 15]
 GUPPY_LONG  = [30, 35, 40, 45, 50, 60]
 
 
+# ── RWB (Red-White-Blue) ───────────────────────────────────────────────────────
+
+RWB_FAST = [3, 5, 7, 10, 12, 15]
+RWB_SLOW = [30, 35, 40, 45, 50, 60]
+
+
 def calc_guppy(closes: np.ndarray, times: list) -> dict:
     """Guppy Multiple Moving Average (GMMA).
 
@@ -104,3 +110,160 @@ def calc_guppy(closes: np.ndarray, times: list) -> dict:
             for p in GUPPY_LONG if len(closes) >= p
         },
     }
+
+
+def calc_rwb(closes: np.ndarray, times: list) -> dict:
+    """RWB (Red-White-Blue) indicator.
+
+    Three series:
+    - ``fast_width`` – signed spread of the fast EMA group (periods 3,5,7,10,12,15),
+      positive when MA3 > MA15, negative otherwise.  Rendered as a line.
+    - ``slow_width`` – signed spread of the slow EMA group (periods 30,35,40,45,50,60),
+      positive when MA30 > MA60, negative otherwise.  Per-bar color: green when
+      slow_width > previous slow_width, red otherwise.
+    - ``rwb``        – gap between the two groups: positive when fast group is above
+      slow group, negative when slow group is above fast group, 0 when overlapping.
+      Rendered as a gray histogram.
+    """
+    fast_emas = {p: talib.EMA(closes, timeperiod=p) for p in RWB_FAST}
+    slow_emas = {p: talib.EMA(closes, timeperiod=p) for p in RWB_SLOW}
+
+    fast_width_out: list = []
+    slow_width_out: list = []
+    rwb_out:        list = []
+
+    prev_slow_width = None
+
+    for i in range(len(closes)):
+        fast_vals = [fast_emas[p][i] for p in RWB_FAST]
+        slow_vals = [slow_emas[p][i] for p in RWB_SLOW]
+
+        if any(np.isnan(v) for v in fast_vals + slow_vals):
+            prev_slow_width = None
+            continue
+
+        fast_max, fast_min = max(fast_vals), min(fast_vals)
+        slow_max, slow_min = max(slow_vals), min(slow_vals)
+
+        ma3,  ma15 = fast_emas[3][i],  fast_emas[15][i]
+        ma30, ma60 = slow_emas[30][i], slow_emas[60][i]
+
+        fast_width = (fast_max - fast_min) if ma3  >= ma15 else (fast_min - fast_max)
+        slow_width = (slow_max - slow_min) if ma30 >= ma60 else (slow_min - slow_max)
+
+        slope_up   = prev_slow_width is not None and slow_width > prev_slow_width
+
+        # rwb: gap between groups (0 when overlapping)
+        if   fast_min > slow_max:  rwb = fast_min - slow_max
+        elif slow_min > fast_max:  rwb = fast_max - slow_min
+        else:                      rwb = 0.0
+
+        t = times[i]
+        fast_width_out.append({"time": t, "value": round(float(fast_width), 4)})
+        slow_width_out.append({
+            "time":  t,
+            "value": round(float(slow_width), 4),
+            "color": "#26a69a" if slope_up else "#ef5350",
+        })
+        rwb_out.append({"time": t, "value": round(float(rwb), 4)})
+
+        prev_slow_width = slow_width
+
+    return {
+        "fast_width": fast_width_out,
+        "slow_width": slow_width_out,
+        "rwb":        rwb_out,
+    }
+
+
+# ── Beardy Squeeze Pro ────────────────────────────────────────────────────────
+
+def calc_squeeze(
+    closes: np.ndarray,
+    highs:  np.ndarray,
+    lows:   np.ndarray,
+    times:  list,
+    length:       int   = 20,
+    bb_mult:      float = 2.0,
+    kc_mult_high: float = 1.0,
+    kc_mult_mid:  float = 1.5,
+    kc_mult_low:  float = 2.0,
+) -> dict:
+    """Beardy Squeeze Pro.
+
+    Returns a dict with two keys:
+    - ``mom`` – momentum histogram: list of ``{time, value, color}``
+    - ``sqz`` – squeeze-state line at y=0: list of ``{time, value, color}``
+
+    Momentum colors (bars):
+      aqua  (#00bcd4) – positive & rising
+      blue  (#2962ff) – positive & falling
+      red   (#ef5350) – negative & falling
+      yellow(#ffeb3b) – negative & rising
+
+    Squeeze dot colors:
+      orange (#ff9800) – BB inside tight KC (KC×1.0)
+      red    (#ef5350) – BB inside mid   KC (KC×1.5)
+      gray   (#434651) – BB inside wide  KC (KC×2.0)
+      green  (#26a69a) – BB outside all  KC (no squeeze)
+    """
+    # ── Bollinger Bands ────────────────────────────────────────────────────────
+    bb_basis = talib.SMA(closes,  timeperiod=length)
+    bb_std   = talib.STDDEV(closes, timeperiod=length, nbdev=1)
+    bb_upper = bb_basis + bb_mult * bb_std
+    bb_lower = bb_basis - bb_mult * bb_std
+
+    # ── Keltner Channels (SMA of true range, three multipliers) ───────────────
+    true_range = talib.TRANGE(highs, lows, closes)   # NaN at index 0
+    dev_kc     = talib.SMA(true_range, timeperiod=length)
+    kc_upper_high = bb_basis + dev_kc * kc_mult_high
+    kc_lower_high = bb_basis - dev_kc * kc_mult_high
+    kc_upper_mid  = bb_basis + dev_kc * kc_mult_mid
+    kc_lower_mid  = bb_basis - dev_kc * kc_mult_mid
+    kc_upper_low  = bb_basis + dev_kc * kc_mult_low
+    kc_lower_low  = bb_basis - dev_kc * kc_mult_low
+
+    # ── Momentum oscillator ───────────────────────────────────────────────────
+    # midpoint = avg(avg(highest(high, n), lowest(low, n)), sma(close, n))
+    highest_high = talib.MAX(highs, timeperiod=length)
+    lowest_low   = talib.MIN(lows,  timeperiod=length)
+    midpoint     = ((highest_high + lowest_low) / 2 + bb_basis) / 2
+    mom_vals     = talib.LINEARREG(closes - midpoint, timeperiod=length)
+
+    mom_out: list = []
+    sqz_out: list = []
+    prev_mom: float | None = None
+
+    for i in range(len(closes)):
+        if (np.isnan(bb_upper[i]) or np.isnan(bb_lower[i]) or
+                np.isnan(kc_upper_low[i]) or np.isnan(mom_vals[i])):
+            prev_mom = None
+            continue
+
+        m    = float(mom_vals[i])
+        bbu  = float(bb_upper[i])
+        bbl  = float(bb_lower[i])
+        prev = 0.0 if prev_mom is None else prev_mom
+
+        # Momentum color
+        if m > 0:
+            mom_color = '#00bcd4' if m > prev else '#2962ff'
+        else:
+            mom_color = '#ef5350' if m < prev else '#ffeb3b'
+
+        # Squeeze state (priority: high > mid > low > none)
+        if (bbl >= float(kc_lower_high[i])) or (bbu <= float(kc_upper_high[i])):
+            sqz_color = '#ff9800'   # orange – highest compression
+        elif (bbl >= float(kc_lower_mid[i])) or (bbu <= float(kc_upper_mid[i])):
+            sqz_color = '#ef5350'   # red – mid compression
+        elif (bbl >= float(kc_lower_low[i])) or (bbu <= float(kc_upper_low[i])):
+            sqz_color = '#434651'   # dark gray – low compression
+        else:
+            sqz_color = '#26a69a'   # green – no squeeze
+
+        t = times[i]
+        mom_out.append({"time": t, "value": round(m, 6), "color": mom_color})
+        sqz_out.append({"time": t, "value": 0.0,         "color": sqz_color})
+        prev_mom = m
+
+    return {"mom": mom_out, "sqz": sqz_out}

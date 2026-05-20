@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -8,7 +9,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
-from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy
+from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
 from db import CacheMeta, Price, get_db
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,8 @@ async def get_indicators(
     ema:   list[int] = Query(default=[]),   # ?ema=3&ema=5
     macd:  list[str] = Query(default=[]),   # ?macd=12,26,9
     guppy: bool      = Query(default=False),# ?guppy=1
+    rwb:     bool    = Query(default=False),# ?rwb=1
+    squeeze: bool    = Query(default=False),# ?squeeze=1
     db: AsyncSession = Depends(get_db),
 ):
     sym         = symbol.upper()
@@ -217,6 +220,8 @@ async def get_indicators(
         return {"symbol": sym, "interval": yf_interval, "ma": {}, "macd": {}}
 
     closes = np.array([r.close for r in rows], dtype=np.float64)
+    highs  = np.array([r.high  for r in rows], dtype=np.float64)
+    lows   = np.array([r.low   for r in rows], dtype=np.float64)
     times  = [to_chart_time(r.ts) for r in rows]
 
     # ── Simple Moving Averages ────────────────────────────────────────────────
@@ -245,22 +250,38 @@ async def get_indicators(
             continue
         macd_out[param] = calc_macd(closes, fast, slow, sig, times)
 
-    guppy_out = calc_guppy(closes, times) if guppy else None
+    guppy_out   = calc_guppy(closes, times)                  if guppy   else None
+    rwb_out     = calc_rwb(closes, times)                    if rwb     else None
+    squeeze_out = calc_squeeze(closes, highs, lows, times)   if squeeze else None
 
     return {"symbol": sym, "interval": yf_interval,
             "ma": ma_out, "ema": ema_out, "macd": macd_out,
-            "guppy": guppy_out}
+            "guppy": guppy_out, "rwb": rwb_out, "squeeze": squeeze_out}
 
 
 @router.get("/{symbol}/info")
 async def get_info(symbol: str):
-    ticker = yf.Ticker(symbol.upper())
-    info = ticker.info
+    sym = symbol.upper()
+    loop = asyncio.get_event_loop()
+    try:
+        # yf.Ticker.info is a blocking network call — run in a thread with a timeout
+        # so it can never hang the event loop or stall other requests indefinitely.
+        info = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: yf.Ticker(sym).info),
+            timeout=12.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408,
+                            detail=f"Timed out fetching info for '{sym}' (>12 s)")
+    except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"Failed to fetch info for '{sym}': {exc}")
+
     if not info or len(info) < 5:
-        raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found")
+        raise HTTPException(status_code=404, detail=f"Symbol '{sym}' not found")
     return {
-        "symbol":        symbol.upper(),
-        "name":          info.get("longName") or info.get("shortName") or symbol.upper(),
+        "symbol":        sym,
+        "name":          info.get("longName") or info.get("shortName") or sym,
         "currency":      info.get("currency", "USD"),
         "exchange":      info.get("exchange", ""),
         "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),

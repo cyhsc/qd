@@ -92,6 +92,42 @@ function GuppyRow({ guppy, onUpdate, onRemove }) {
   )
 }
 
+// ── RWB row ───────────────────────────────────────────────────────────────────
+
+function RWBRow({ onRemove }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+      {/* Mini colour preview: red / gray / green stripes */}
+      <div style={{
+        width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
+        background: 'linear-gradient(to bottom, #ef5350 33%, #787b86 33% 66%, #26a69a 66%)',
+      }} />
+      <span style={{ fontSize: '11px', color: 'var(--text-muted)', flex: 1 }}>
+        Fast 3–15 · Slow 30–60
+      </span>
+      <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
+    </div>
+  )
+}
+
+// ── Squeeze row ───────────────────────────────────────────────────────────────
+
+function SqueezeRow({ onRemove }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+      {/* Mini colour preview: green/gray/red/orange squeeze states + aqua/blue mom */}
+      <div style={{
+        width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
+        background: 'linear-gradient(to right, #26a69a 25%, #434651 25% 50%, #ef5350 50% 75%, #ff9800 75%)',
+      }} />
+      <span style={{ fontSize: '11px', color: 'var(--text-muted)', flex: 1 }}>
+        BB / KC · length 20
+      </span>
+      <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
+    </div>
+  )
+}
+
 // ── MACD row ──────────────────────────────────────────────────────────────────
 
 function MACDRow({ macd, onUpdate, onRemove }) {
@@ -175,7 +211,7 @@ function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeader
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange }) {
+export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange, rwbConfigs, onRwbChange, squeezeConfigs, onSqueezeChange }) {
   const [open, setOpen] = useState(false)
   const panelRef        = useRef(null)
   const btnRef          = useRef(null)
@@ -206,6 +242,20 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeGuppy = id     => onGuppyChange(guppyConfigs.filter(g => g.id !== id))
   const updateGuppy = (id, up) => onGuppyChange(guppyConfigs.map(g => g.id === id ? { ...g, ...up } : g))
 
+  // Squeeze handlers
+  const addSqueeze    = () => {
+    if (squeezeConfigs.length > 0) return   // only one squeeze makes sense
+    onSqueezeChange([...squeezeConfigs, { id: Date.now().toString() }])
+  }
+  const removeSqueeze = id => onSqueezeChange(squeezeConfigs.filter(s => s.id !== id))
+
+  // RWB handlers
+  const addRWB    = () => {
+    if (rwbConfigs.length > 0) return   // only one RWB makes sense
+    onRwbChange([...rwbConfigs, { id: Date.now().toString() }])
+  }
+  const removeRWB = id => onRwbChange(rwbConfigs.filter(r => r.id !== id))
+
   // MACD handlers
   const addMACD  = () => onMacdChange([
     ...macdConfigs,
@@ -215,7 +265,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeMACD  = id     => onMacdChange(macdConfigs.filter(m => m.id !== id))
   const updateMACD  = (id, up) => onMacdChange(macdConfigs.map(m => m.id === id ? { ...m, ...up } : m))
 
-  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length
+  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length + rwbConfigs.length + squeezeConfigs.length
   const btnLabel   = totalCount > 0 ? `Indicators (${totalCount})` : 'Indicators'
 
   return (
@@ -314,6 +364,36 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
               <MACDRow key={macd.id} macd={macd}
                 onUpdate={up => updateMACD(macd.id, up)}
                 onRemove={() => removeMACD(macd.id)} />
+            ))}
+          </IndicatorSection>
+
+          {/* ── Divider ── */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+
+          {/* ── Squeeze ── */}
+          <IndicatorSection
+            label="Squeeze"
+            count={squeezeConfigs.length}
+            addLabel="Add Squeeze"
+            onAdd={addSqueeze}
+          >
+            {squeezeConfigs.map(s => (
+              <SqueezeRow key={s.id} onRemove={() => removeSqueeze(s.id)} />
+            ))}
+          </IndicatorSection>
+
+          {/* ── Divider ── */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+
+          {/* ── RWB ── */}
+          <IndicatorSection
+            label="RWB"
+            count={rwbConfigs.length}
+            addLabel="Add RWB"
+            onAdd={addRWB}
+          >
+            {rwbConfigs.map(r => (
+              <RWBRow key={r.id} onRemove={() => removeRWB(r.id)} />
             ))}
           </IndicatorSection>
         </div>

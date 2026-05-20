@@ -46,8 +46,9 @@ async def create_watchlist(body: CreateListBody, db: AsyncSession = Depends(get_
     db.add(wl)
     await db.commit()
     await db.refresh(wl)
-    wl.symbols = []
-    return wl_dict(wl)
+    # Return directly — don't access wl.symbols, which would trigger a
+    # lazy-load and raise MissingGreenlet in an async session.
+    return {"id": str(wl.id), "name": wl.name, "symbols": []}
 
 
 @router.delete("/{list_id}", status_code=204)

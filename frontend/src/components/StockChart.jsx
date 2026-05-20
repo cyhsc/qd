@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 
 // ── Guppy period groups ───────────────────────────────────────────────────────
@@ -12,40 +12,58 @@ const SPLIT_DEFAULT = 0.65
 const SPLIT_MIN     = 0.20
 const SPLIT_MAX     = 0.85
 
-// Static margins used when no MACD pane is visible
+// Static margins used when no sub-pane is visible
 const MARGINS_SOLO = {
   main: { top: 0.05, bottom: 0.22 },
   vol:  { top: 0.80, bottom: 0.00 },
 }
 
-// Dynamic margins computed from the current split position
-function splitMargins(split) {
+// Main + volume margins for the draggable split layout
+function mainVolMargins(split) {
   return {
     main: { top: 0.03, bottom: (1 - split) + 0.03 },
     vol:  { top: split - 0.10, bottom: (1 - split) + 0.01 },
-    macd: { top: split + 0.03, bottom: 0.02 },
+  }
+}
+
+// Divide the bottom (1-split) slice evenly among `total` sub-panes.
+// `index` is 0-based: panes appear top-to-bottom in the order they are registered.
+function subPaneMargins(split, index, total) {
+  const H       = (1 - split) / total
+  const paneTop = split + index * H
+  return {
+    top:    paneTop + 0.03,
+    bottom: Math.max(0.02, 1 - paneTop - H + 0.02),
   }
 }
 
 // ── Chart options ─────────────────────────────────────────────────────────────
 
+const THEME_COLORS = {
+  light: { bg: '#ffffff', text: '#434651', grid: '#f0f3fa', border: '#e0e3eb' },
+  dark:  { bg: '#131722', text: '#9598a1', grid: '#1e222d', border: '#2a2e39' },
+}
+
+function themeChartOpts(theme) {
+  const c = THEME_COLORS[theme] ?? THEME_COLORS.light
+  return {
+    layout: { background: { color: c.bg }, textColor: c.text },
+    grid:   { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+    timeScale:       { borderColor: c.border },
+    rightPriceScale: { borderColor: c.border },
+  }
+}
+
 const CHART_OPTS = {
-  layout: {
-    background: { color: '#131722' },
-    textColor:  '#9598a1',
-  },
-  grid: {
-    vertLines: { color: '#1e222d' },
-    horzLines: { color: '#1e222d' },
-  },
+  ...themeChartOpts('light'),   // overwritten immediately by the theme effect
   crosshair: { mode: CrosshairMode.Normal },
   timeScale: {
-    borderColor:    '#2a2e39',
+    ...themeChartOpts('light').timeScale,
     timeVisible:    true,
     secondsVisible: false,
   },
   rightPriceScale: {
-    borderColor:  '#2a2e39',
+    ...themeChartOpts('light').rightPriceScale,
     scaleMargins: MARGINS_SOLO.main,
   },
 }
@@ -54,6 +72,7 @@ const CHART_OPTS = {
 
 function fmtPrice(n)  { return n == null ? '—' : n.toFixed(2) }
 function fmtMacd(n)   { return n == null ? '—' : n.toFixed(4) }
+function fmtRwb(n)    { return n == null ? '—' : n.toFixed(4) }
 
 function fmtVolume(n) {
   if (n == null) return '—'
@@ -65,38 +84,55 @@ function fmtVolume(n) {
 
 // ── Visible-range helper ──────────────────────────────────────────────────────
 
+const RIGHT_BAR_PADDING = 10   // empty bar slots reserved to the right of the last bar
+
 function applyVisibleRange(chart, candles, visibleDays) {
   if (!candles?.length) return
-  if (!isFinite(visibleDays)) { chart.timeScale().fitContent(); return }
-  const last = candles[candles.length - 1]
+
+  const lastIdx = candles.length - 1
+  const to = lastIdx + RIGHT_BAR_PADDING   // always 10 empty slots on the right
+
+  if (!isFinite(visibleDays)) {
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to })
+    return
+  }
+
+  // Find the leftmost bar index that falls within visibleDays of the last bar.
+  // Comparing time values directly works for both Unix-second numbers and
+  // "YYYY-MM-DD" strings (ISO date strings sort lexicographically).
+  const last   = candles[lastIdx]
+  const cutoff = typeof last.time === 'number'
+    ? last.time - visibleDays * 86400
+    : new Date(Date.now() - visibleDays * 86400000).toISOString().slice(0, 10)
+
+  let fromIdx = 0
+  for (let i = lastIdx; i >= 0; i--) {
+    if (candles[i].time < cutoff) { fromIdx = i + 1; break }
+  }
+
   try {
-    if (typeof last.time === 'number') {
-      chart.timeScale().setVisibleRange({
-        from: last.time - visibleDays * 86400,
-        to:   last.time + 3600,
-      })
-    } else {
-      const to = new Date(), from = new Date(to)
-      from.setDate(from.getDate() - Math.ceil(visibleDays))
-      chart.timeScale().setVisibleRange({
-        from: from.toISOString().slice(0, 10),
-        to:   to.toISOString().slice(0, 10),
-      })
-    }
-  } catch { chart.timeScale().fitContent() }
+    chart.timeScale().setVisibleLogicalRange({ from: fromIdx, to })
+  } catch {
+    chart.timeScale().setVisibleLogicalRange({ from: 0, to })
+  }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function StockChart({
   candles, volume,
-  visibleDays  = Infinity,
-  maConfigs    = [],
-  macdConfigs  = [],
-  guppyConfigs = [],
-  maData       = {},    // { "20": [{time,value}, ...] }
-  guppyData    = null,  // { short: {"3": [...], ...}, long: {"30": [...], ...} }
-  macdData     = {},    // { "12,26,9": { macd_line, signal_line, histogram } }
+  visibleDays    = Infinity,
+  theme          = 'light',
+  maConfigs      = [],
+  macdConfigs    = [],
+  guppyConfigs   = [],
+  rwbConfigs     = [],
+  squeezeConfigs = [],
+  maData         = {},    // { "20": [{time,value}, ...] }
+  guppyData      = null,  // { short: {"3": [...], ...}, long: {"30": [...], ...} }
+  macdData       = {},    // { "12,26,9": { macd_line, signal_line, histogram } }
+  rwbData        = null,  // { fast_width: [...], slow_width: [...], rwb: [...] }
+  squeezeData    = null,  // { mom: [...], sqz: [...] }
 }) {
   const containerRef   = useRef(null)
   const chartRef       = useRef(null)
@@ -112,25 +148,33 @@ export function StockChart({
   const macdSeriesMap = useRef(new Map())
   const macdLastRef   = useRef({})
   const macdByTimeRef = useRef({})
-  const macdScaleRef  = useRef(null)
+  const macdScaleRef  = useRef(null)   // anchor series for scale-margin updates
 
   // guppySeriesMap: id → Map<period, series>
   const guppySeriesMap = useRef(new Map())
 
+  // rwbSeriesMap: id → { fastLine, slowLine, rwbHist }
+  const rwbSeriesMap  = useRef(new Map())
+  const rwbScaleRef   = useRef(null)
+
+  // sqzSeriesMap: id → { momHist, sqzLine }
+  const sqzSeriesMap  = useRef(new Map())
+  const sqzScaleRef   = useRef(null)
+
   const [hover,      setHover]      = useState(null)
   const [maLegend,   setMaLegend]   = useState({})
   const [macdLegend, setMacdLegend] = useState({})
+  const [rwbLegend,  setRwbLegend]  = useState(null)   // { fast, slow, rwb }
+  const [sqzLegend,  setSqzLegend]  = useState(null)   // { mom, momColor, sqzColor }
 
   // ── Draggable split ───────────────────────────────────────────────────────
   const [split,       setSplit]       = useState(SPLIT_DEFAULT)
   const [isDragging,  setIsDragging]  = useState(false)
-  const splitRef      = useRef(SPLIT_DEFAULT)   // always in sync with split state
+  const splitRef      = useRef(SPLIT_DEFAULT)
   const isDraggingRef = useRef(false)
 
-  // Keep ref in sync (used by effects whose deps don't include split)
   useEffect(() => { splitRef.current = split }, [split])
 
-  // Attach global drag handlers once; use refs to stay out of the dep array
   useEffect(() => {
     const onMove = (e) => {
       if (!isDraggingRef.current || !containerRef.current) return
@@ -152,9 +196,38 @@ export function StockChart({
     }
   }, [])
 
-  const hasMacd = macdConfigs.length > 0
+  const hasMacd = macdConfigs.length    > 0
+  const hasRwb  = rwbConfigs.length     > 0
+  const hasSqz  = squeezeConfigs.length > 0
+
+  // Keep a ref so chart creation ([] effect) can read the initial theme
+  const themeRef = useRef(theme)
+  useEffect(() => { themeRef.current = theme }, [theme])
+
+  // Live-update chart colors when theme changes
+  useEffect(() => {
+    if (!chartRef.current) return
+    chartRef.current.applyOptions(themeChartOpts(theme))
+  }, [theme])
 
   useEffect(() => { visibleDaysRef.current = visibleDays }, [visibleDays])
+
+  // ── syncSubPaneMargins ────────────────────────────────────────────────────
+  // Re-applies scale margins to all active sub-panes whenever the split moves
+  // or a pane is added/removed.  Reads exclusively from refs so it never needs
+  // to be recreated (empty dep array is intentional).
+
+  const syncSubPaneMargins = useCallback(() => {
+    // Order: MACD → RWB → Squeeze  (matches activeSubPanes order in render)
+    const live = [macdScaleRef, rwbScaleRef, sqzScaleRef].filter(r => r.current != null)
+    const total = live.length
+    if (total === 0) return
+    live.forEach((ref, idx) => {
+      ref.current.priceScale().applyOptions({
+        scaleMargins: subPaneMargins(splitRef.current, idx, total),
+      })
+    })
+  }, [])
 
   // ── Create chart (once) ───────────────────────────────────────────────────
 
@@ -163,6 +236,15 @@ export function StockChart({
 
     const chart = createChart(containerRef.current, {
       ...CHART_OPTS,
+      ...themeChartOpts(themeRef.current),
+      timeScale: {
+        ...themeChartOpts(themeRef.current).timeScale,
+        timeVisible: true, secondsVisible: false,
+      },
+      rightPriceScale: {
+        ...themeChartOpts(themeRef.current).rightPriceScale,
+        scaleMargins: MARGINS_SOLO.main,
+      },
       width:  containerRef.current.clientWidth,
       height: containerRef.current.clientHeight,
     })
@@ -224,29 +306,34 @@ export function StockChart({
       candleRef.current = null
       volumeRef.current = null
       macdScaleRef.current = null
+      rwbScaleRef.current  = null
+      sqzScaleRef.current  = null
       maSeriesMap.current.clear()
       macdSeriesMap.current.clear()
       guppySeriesMap.current.clear()
+      rwbSeriesMap.current.clear()
+      sqzSeriesMap.current.clear()
       maLastValsRef.current  = {}
       macdLastRef.current    = {}
       macdByTimeRef.current  = {}
     }
   }, [])
 
-  // ── Update scale margins whenever split or MACD visibility changes ────────
+  // ── Update scale margins whenever split or sub-pane visibility changes ────
 
   useEffect(() => {
     if (!chartRef.current) return
-    if (hasMacd) {
-      const m = splitMargins(split)
+    const hasAny = hasMacd || hasRwb || hasSqz
+    if (hasAny) {
+      const m = mainVolMargins(split)
       chartRef.current.priceScale('right').applyOptions({ scaleMargins: m.main })
       chartRef.current.priceScale('vol').applyOptions({   scaleMargins: m.vol  })
-      macdScaleRef.current?.priceScale().applyOptions({   scaleMargins: m.macd })
+      syncSubPaneMargins()
     } else {
       chartRef.current.priceScale('right').applyOptions({ scaleMargins: MARGINS_SOLO.main })
       chartRef.current.priceScale('vol').applyOptions({   scaleMargins: MARGINS_SOLO.vol  })
     }
-  }, [split, hasMacd])
+  }, [split, hasMacd, hasRwb, hasSqz, syncSubPaneMargins])
 
   // ── Load candle + volume data ─────────────────────────────────────────────
 
@@ -345,13 +432,8 @@ export function StockChart({
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         })
         map.set(cfg.id, { macd: macdSeries, signal: signalSeries, histogram: histSeries })
-
-        // Use splitRef so we get the live split without adding split to deps
-        histSeries.priceScale().applyOptions({
-          scaleMargins: splitMargins(splitRef.current).macd,
-        })
-        // Keep a ref to this series for future scale-margin updates
         if (!macdScaleRef.current) macdScaleRef.current = histSeries
+        syncSubPaneMargins()
       } else {
         const s = map.get(cfg.id)
         s.macd.applyOptions({ color: cfg.macdColor })
@@ -396,7 +478,7 @@ export function StockChart({
     }
 
     setMacdLegend({ ...macdLastRef.current })
-  }, [macdConfigs, macdData])
+  }, [macdConfigs, macdData, syncSubPaneMargins])
 
   // ── Guppy MMA series ──────────────────────────────────────────────────────
 
@@ -406,7 +488,6 @@ export function StockChart({
     const map      = guppySeriesMap.current
     const incoming = new Set(guppyConfigs.map(g => g.id))
 
-    // Remove stale configs
     for (const [id, seriesByPeriod] of map) {
       if (!incoming.has(id)) {
         for (const s of seriesByPeriod.values()) chart.removeSeries(s)
@@ -416,7 +497,6 @@ export function StockChart({
 
     for (const cfg of guppyConfigs) {
       if (!map.has(cfg.id)) {
-        // Create 12 line series — 6 short (red group) + 6 long (blue group)
         const seriesByPeriod = new Map()
         for (const p of GUPPY_SHORT) {
           seriesByPeriod.set(p, chart.addLineSeries({
@@ -432,13 +512,11 @@ export function StockChart({
         }
         map.set(cfg.id, seriesByPeriod)
       } else {
-        // Update colors if changed
         const seriesByPeriod = map.get(cfg.id)
         for (const p of GUPPY_SHORT) seriesByPeriod.get(p)?.applyOptions({ color: cfg.shortColor })
         for (const p of GUPPY_LONG)  seriesByPeriod.get(p)?.applyOptions({ color: cfg.longColor })
       }
 
-      // Set data from backend guppyData: { short: {period: [...]}, long: {...} }
       const seriesByPeriod = map.get(cfg.id)
       const shortData = guppyData?.short ?? {}
       const longData  = guppyData?.long  ?? {}
@@ -447,10 +525,147 @@ export function StockChart({
     }
   }, [guppyConfigs, guppyData])
 
+  // ── RWB series ────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart    = chartRef.current
+    const map      = rwbSeriesMap.current
+    const incoming = new Set(rwbConfigs.map(r => r.id))
+
+    for (const [id, s] of map) {
+      if (!incoming.has(id)) {
+        chart.removeSeries(s.fastLine)
+        chart.removeSeries(s.slowLine)
+        chart.removeSeries(s.rwbHist)
+        map.delete(id)
+      }
+    }
+    if (rwbConfigs.length === 0) {
+      rwbScaleRef.current = null
+      syncSubPaneMargins()
+      setRwbLegend(null)
+      return
+    }
+
+    for (const cfg of rwbConfigs) {
+      if (!map.has(cfg.id)) {
+        // rwb (gray) histogram — anchors the scale
+        const rwbHist = chart.addHistogramSeries({
+          priceScaleId: 'rwb', color: '#787b86',
+          priceLineVisible: false, lastValueVisible: false,
+        })
+        // slow_width line — per-point green/red from backend
+        const slowLine = chart.addLineSeries({
+          lineWidth: 1, priceScaleId: 'rwb',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+        // fast_width line — red
+        const fastLine = chart.addLineSeries({
+          color: '#ef5350', lineWidth: 1, priceScaleId: 'rwb',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+        map.set(cfg.id, { fastLine, slowLine, rwbHist })
+        if (!rwbScaleRef.current) rwbScaleRef.current = rwbHist
+        syncSubPaneMargins()
+      }
+
+      if (!rwbData) continue
+
+      const fastData = rwbData.fast_width ?? []
+      const slowData = rwbData.slow_width ?? []   // per-point color from backend
+      const rwbArr   = rwbData.rwb        ?? []
+
+      const s = map.get(cfg.id)
+      s.fastLine.setData(fastData)
+      s.slowLine.setData(slowData)
+      s.rwbHist.setData(rwbArr)
+
+      if (fastData.length) {
+        setRwbLegend({
+          fast: fastData[fastData.length - 1].value,
+          slow: slowData.length ? slowData[slowData.length - 1].value : null,
+          rwb:  rwbArr.length   ? rwbArr[rwbArr.length - 1].value     : null,
+        })
+      }
+    }
+  }, [rwbConfigs, rwbData, syncSubPaneMargins])
+
+  // ── Squeeze series ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart    = chartRef.current
+    const map      = sqzSeriesMap.current
+    const incoming = new Set(squeezeConfigs.map(s => s.id))
+
+    for (const [id, s] of map) {
+      if (!incoming.has(id)) {
+        chart.removeSeries(s.momHist)
+        chart.removeSeries(s.sqzLine)
+        map.delete(id)
+      }
+    }
+    if (squeezeConfigs.length === 0) {
+      sqzScaleRef.current = null
+      syncSubPaneMargins()
+      setSqzLegend(null)
+      return
+    }
+
+    for (const cfg of squeezeConfigs) {
+      if (!map.has(cfg.id)) {
+        // Momentum histogram — per-bar color from backend; anchors the scale
+        const momHist = chart.addHistogramSeries({
+          priceScaleId: 'sqz',
+          priceLineVisible: false, lastValueVisible: false,
+        })
+        // Squeeze-state line at y=0 — per-point color from backend, drawn thick
+        const sqzLine = chart.addLineSeries({
+          lineWidth: 4, priceScaleId: 'sqz',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+        map.set(cfg.id, { momHist, sqzLine })
+        if (!sqzScaleRef.current) sqzScaleRef.current = momHist
+        syncSubPaneMargins()
+      }
+
+      if (!squeezeData) continue
+
+      const momData = squeezeData.mom ?? []
+      const sqzData = squeezeData.sqz ?? []
+
+      const s = map.get(cfg.id)
+      s.momHist.setData(momData)
+      s.sqzLine.setData(sqzData)
+
+      if (momData.length) {
+        const last = momData[momData.length - 1]
+        setSqzLegend({
+          mom:      last.value,
+          momColor: last.color,
+          sqzColor: sqzData.length ? sqzData[sqzData.length - 1].color : '#26a69a',
+        })
+      }
+    }
+  }, [squeezeConfigs, squeezeData, syncSubPaneMargins])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   const isUp = hover ? hover.close >= hover.open : true
   const clr  = isUp ? '#26a69a' : '#ef5350'
+
+  // Active sub-panes in display order; drives separators and legend positions.
+  const activeSubPanes = [
+    hasMacd && 'macd',
+    hasRwb  && 'rwb',
+    hasSqz  && 'sqz',
+  ].filter(Boolean)
+  const totalSubPanes = activeSubPanes.length
+  const H = totalSubPanes > 0 ? (1 - split) / totalSubPanes : 0
+
+  // Fractional top of sub-pane at index k
+  const paneTop = (k) => split + k * H
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%',
@@ -509,7 +724,6 @@ export function StockChart({
           position: 'absolute', top: 30, left: 12, zIndex: 10,
           display: 'flex', flexWrap: 'wrap', gap: '12px',
           fontSize: '12px', fontFamily: 'var(--font-mono)', pointerEvents: 'none',
-          // offset below MA legend if both are present
           marginTop: maConfigs.length > 0 ? '18px' : '0',
         }}>
           {guppyConfigs.map(cfg => (
@@ -521,15 +735,15 @@ export function StockChart({
               }} />
               <span style={{ color: 'var(--text-muted)' }}>GMMA</span>
               <span style={{ color: cfg.shortColor }}>S</span>
-              <span style={{ color: 'var(--text-muted)'}}>/</span>
+              <span style={{ color: 'var(--text-muted)' }}>/</span>
               <span style={{ color: cfg.longColor }}>L</span>
             </span>
           ))}
         </div>
       )}
 
-      {/* Draggable separator — only shown when MACD pane is visible */}
-      {hasMacd && (
+      {/* Draggable separator — shown when any sub-pane is visible */}
+      {totalSubPanes > 0 && (
         <div
           onMouseDown={e => {
             e.preventDefault()
@@ -539,8 +753,7 @@ export function StockChart({
           style={{
             position: 'absolute', zIndex: 20,
             top: `${split * 100}%`, left: 0, right: 0,
-            height: '5px',
-            transform: 'translateY(-2px)',
+            height: '5px', transform: 'translateY(-2px)',
             cursor: 'row-resize',
             background: isDragging ? 'var(--blue, #2962ff)' : 'var(--border)',
             transition: isDragging ? 'none' : 'background 0.15s',
@@ -548,11 +761,20 @@ export function StockChart({
         />
       )}
 
+      {/* Static dividers between sub-panes */}
+      {activeSubPanes.slice(1).map((_, k) => (
+        <div key={k} style={{
+          position: 'absolute', zIndex: 15, pointerEvents: 'none',
+          top: `${paneTop(k + 1) * 100}%`, left: 0, right: 0,
+          height: '1px', background: 'var(--border)',
+        }} />
+      ))}
+
       {/* MACD legend */}
       {hasMacd && (
         <div style={{
           position: 'absolute', zIndex: 10, pointerEvents: 'none',
-          top: `calc(${split * 100}% + 8px)`, left: 12,
+          top: `calc(${paneTop(activeSubPanes.indexOf('macd')) * 100}% + 8px)`, left: 12,
           display: 'flex', flexWrap: 'wrap', gap: '14px',
           fontSize: '11px', fontFamily: 'var(--font-mono)',
         }}>
@@ -571,6 +793,54 @@ export function StockChart({
               </span>
             )
           })}
+        </div>
+      )}
+
+      {/* RWB legend */}
+      {hasRwb && (
+        <div style={{
+          position: 'absolute', zIndex: 10, pointerEvents: 'none',
+          top: `calc(${paneTop(activeSubPanes.indexOf('rwb')) * 100}% + 8px)`, left: 12,
+          display: 'flex', gap: '14px',
+          fontSize: '11px', fontFamily: 'var(--font-mono)',
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ color: 'var(--text-muted)' }}>RWB</span>
+            {rwbLegend?.fast != null && (
+              <span style={{ color: '#ef5350' }}>{fmtRwb(rwbLegend.fast)}</span>
+            )}
+            {rwbLegend?.slow != null && (
+              <span style={{ color: '#26a69a' }}>{fmtRwb(rwbLegend.slow)}</span>
+            )}
+            {rwbLegend?.rwb != null && (
+              <span style={{ color: '#787b86' }}>{fmtRwb(rwbLegend.rwb)}</span>
+            )}
+          </span>
+        </div>
+      )}
+
+      {/* Squeeze legend */}
+      {hasSqz && (
+        <div style={{
+          position: 'absolute', zIndex: 10, pointerEvents: 'none',
+          top: `calc(${paneTop(activeSubPanes.indexOf('sqz')) * 100}% + 8px)`, left: 12,
+          display: 'flex', gap: '10px', alignItems: 'center',
+          fontSize: '11px', fontFamily: 'var(--font-mono)',
+        }}>
+          <span style={{ color: 'var(--text-muted)' }}>SQZ</span>
+          {/* Squeeze state dot */}
+          {sqzLegend?.sqzColor && (
+            <span style={{
+              display: 'inline-block', width: '8px', height: '8px',
+              borderRadius: '50%', background: sqzLegend.sqzColor, flexShrink: 0,
+            }} />
+          )}
+          {/* Momentum value in its bar color */}
+          {sqzLegend?.mom != null && (
+            <span style={{ color: sqzLegend.momColor ?? 'var(--text-secondary)' }}>
+              {fmtMacd(sqzLegend.mom)}
+            </span>
+          )}
         </div>
       )}
 
