@@ -482,7 +482,7 @@ export default function App() {
             <span style={{ fontSize: '13px', fontWeight: 700 }}>{info.symbol}</span>
             <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{info.name}</span>
             {info.sector && (
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-primary)' }}>
                 {info.sector}{info.industry ? ` · ${info.industry}` : ''}
               </span>
             )}
