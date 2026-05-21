@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
+from core.screen import screen_individual
 from db import CacheMeta, Price, get_db
 
 logger = logging.getLogger(__name__)
@@ -288,4 +289,59 @@ async def get_info(symbol: str):
         "prev_close":    info.get("previousClose") or info.get("regularMarketPreviousClose"),
         "sector":        info.get("sector") or None,
         "industry":      info.get("industry") or None,
+    }
+
+
+@router.get("/{symbol}/screen")
+async def get_screen(symbol: str):
+    sym  = symbol.upper()
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: screen_individual(sym)),
+            timeout=60.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408,
+                            detail=f"Screening timed out for '{sym}' (>60 s)")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"Screening failed for '{sym}': {exc}")
+
+    def fmt_line(la):
+        return {"sign": la.sign.value, "slope": la.slope.value,
+                "value": round(la.value, 6), "prev_value": round(la.prev_value, 6)}
+
+    return {
+        "symbol":  result.symbol,
+        "verdict": result.verdict,
+        "score":   result.score,
+        "total":   result.total,
+        "conditions": [
+            {
+                "name":         c.name,
+                "description":  c.description,
+                "passed":       c.passed,
+                "verdict_role": c.verdict_role,  # True/False/None
+            }
+            for c in result.conditions
+        ],
+        "macd": {
+            "macd":      fmt_line(result.macd.macd),
+            "signal":    fmt_line(result.macd.signal),
+            "histogram": fmt_line(result.macd.histogram),
+        },
+        "rwb": {
+            "rwb":        fmt_line(result.rwb.rwb),
+            "fast_width": fmt_line(result.rwb.fast_width),
+            "slow_width": fmt_line(result.rwb.slow_width),
+            "fast_width_above_slow_width": result.rwb.fast_width_above_slow_width,
+        },
+        "sqz": {
+            "momentum":      fmt_line(result.sqz.momentum),
+            "squeeze_state": result.sqz.squeeze_state.value,
+        },
+        "report": result.report,
     }

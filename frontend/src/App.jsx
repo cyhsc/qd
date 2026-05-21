@@ -108,6 +108,12 @@ export default function App() {
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
 
+  // Analysis modal state
+  const [analysisOpen,    setAnalysisOpen]    = useState(false)
+  const [analysisData,    setAnalysisData]    = useState(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [analysisError,   setAnalysisError]   = useState(null)
+
   // Watchlist state
   const [watchlists,    setWatchlists]    = useState([])
   const [activeListId,  setActiveListId]  = useState(loadActiveListId)
@@ -232,6 +238,27 @@ export default function App() {
     if (!sym) return
     setSymbol(sym)
     fetchStock(sym, interval)
+  }
+
+  const handleAnalysis = async () => {
+    const sym = symbol || input.trim().toUpperCase()
+    if (!sym) return
+    setAnalysisOpen(true)
+    setAnalysisData(null)
+    setAnalysisError(null)
+    setAnalysisLoading(true)
+    try {
+      const res = await fetch(`/api/stocks/${sym}/screen`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail ?? `HTTP ${res.status}`)
+      }
+      setAnalysisData(await res.json())
+    } catch (e) {
+      setAnalysisError(e.message)
+    } finally {
+      setAnalysisLoading(false)
+    }
   }
 
   // Range only zooms — no re-fetch
@@ -396,6 +423,21 @@ export default function App() {
             }}>
               Go
             </button>
+            <button
+              type="button"
+              onClick={handleAnalysis}
+              disabled={!symbol && !input.trim()}
+              style={{
+                height: '32px', padding: '0 14px',
+                background: '#f57c00',
+                border: 'none',
+                borderRadius: '6px', color: '#fff',
+                fontSize: '12px', fontWeight: 600, cursor: 'pointer',
+                opacity: (!symbol && !input.trim()) ? 0.4 : 1,
+              }}
+            >
+              Analysis
+            </button>
           </form>
         </header>
 
@@ -538,6 +580,252 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* ── Analysis modal ── */}
+      {analysisOpen && (
+        <AnalysisModal
+          loading={analysisLoading}
+          error={analysisError}
+          data={analysisData}
+          onClose={() => setAnalysisOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Analysis modal ────────────────────────────────────────────────────────────
+
+function SignSlope({ sign, slope, value }) {
+  const signColor = sign === 'positive' ? 'var(--green)' : sign === 'negative' ? 'var(--red)' : 'var(--text-muted)'
+  const slopeColor = slope === 'rising' ? 'var(--green)' : slope === 'falling' ? 'var(--red)' : 'var(--text-muted)'
+  return (
+    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+      <span style={{ color: signColor, fontWeight: 600 }}>{sign}</span>
+      {' / '}
+      <span style={{ color: slopeColor }}>{slope}</span>
+      <span style={{ color: 'var(--text-muted)', marginLeft: '6px' }}>
+        {value >= 0 ? '+' : ''}{value.toFixed(4)}
+      </span>
+    </span>
+  )
+}
+
+function AnalysisModal({ loading, error, data, onClose }) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '580px', maxHeight: '85vh',
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--border)',
+          borderRadius: '10px',
+          display: 'flex', flexDirection: 'column',
+          overflow: 'hidden',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 18px', borderBottom: '1px solid var(--border)', flexShrink: 0,
+        }}>
+          <span style={{ fontWeight: 700, fontSize: '14px' }}>
+            {data ? `Analysis — ${data.symbol}` : 'Analysis'}
+          </span>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', fontSize: '18px', lineHeight: 1, padding: '0 2px',
+          }}>×</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: 'auto', padding: '16px 18px', flex: 1 }}>
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
+              Running analysis… (fetching 3 years of data)
+            </div>
+          )}
+          {error && (
+            <div style={{
+              padding: '12px 16px', borderRadius: '6px',
+              background: 'rgba(239,83,80,0.1)', border: '1px solid var(--red)',
+              color: 'var(--red)', fontSize: '13px',
+            }}>
+              {error}
+            </div>
+          )}
+          {data && (
+            <>
+              {/* Verdict banner */}
+              {(() => {
+                const failing = data.conditions.filter(
+                  c => c.verdict_role !== null && c.verdict_role !== undefined && c.passed !== c.verdict_role
+                )
+                return (
+                  <div style={{
+                    padding: '12px 16px', borderRadius: '8px', marginBottom: '16px',
+                    background: data.verdict ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.1)',
+                    border: `1px solid ${data.verdict ? 'var(--green)' : 'var(--red)'}`,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: failing.length ? '8px' : 0 }}>
+                      <span style={{ fontSize: '20px', fontWeight: 700, color: data.verdict ? 'var(--green)' : 'var(--red)' }}>
+                        {data.verdict ? 'PASS' : 'FAIL'}
+                      </span>
+                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                        {data.score} / {data.total} conditions passed
+                        {' · '}{Object.keys(data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined)).length || failing.length + data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined && c.passed === c.verdict_role).length} required rules
+                      </span>
+                    </div>
+                    {failing.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                        {failing.map(c => (
+                          <span key={c.name} style={{
+                            fontSize: '10px', fontWeight: 600, fontFamily: 'var(--font-mono)',
+                            padding: '2px 6px', borderRadius: '3px',
+                            background: 'rgba(239,83,80,0.15)', color: 'var(--red)',
+                          }}>
+                            {c.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* MACD */}
+              <SectionHeader label="MACD  (12, 26, 9)" />
+              <AnalysisTable rows={[
+                ['Line',      data.macd.macd],
+                ['Signal',    data.macd.signal],
+                ['Histogram', data.macd.histogram],
+              ]} />
+
+              {/* RWB */}
+              <SectionHeader label="RWB  (fast 3-15 / slow 30-60)" />
+              <AnalysisTable rows={[
+                ['RWB gap',    data.rwb.rwb],
+                ['Fast width', data.rwb.fast_width],
+                ['Slow width', data.rwb.slow_width],
+              ]} />
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px' }}>
+                Fast width &gt; slow width: {' '}
+                <span style={{ color: data.rwb.fast_width_above_slow_width ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                  {String(data.rwb.fast_width_above_slow_width)}
+                </span>
+              </div>
+
+              {/* SQZ */}
+              <SectionHeader label="Squeeze Momentum" />
+              <AnalysisTable rows={[['Momentum', data.sqz.momentum]]} />
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px' }}>
+                Squeeze state: {' '}
+                <span style={{
+                  fontWeight: 600,
+                  color: data.sqz.squeeze_state === 'off' ? 'var(--green)'
+                       : data.sqz.squeeze_state === 'on'  ? 'var(--red)'
+                       : 'var(--text-secondary)',
+                }}>
+                  {data.sqz.squeeze_state.toUpperCase()}
+                </span>
+              </div>
+
+              {/* Conditions */}
+              <SectionHeader label="Conditions" />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {data.conditions.map((c, i) => {
+                  const isRequired = c.verdict_role !== null && c.verdict_role !== undefined
+                  const isFailing  = isRequired && c.passed !== c.verdict_role
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'flex-start', gap: '8px',
+                      padding: '6px 8px', borderRadius: '5px',
+                      background: isFailing
+                        ? 'rgba(239,83,80,0.1)'
+                        : c.passed ? 'rgba(38,166,154,0.07)' : 'rgba(0,0,0,0.03)',
+                      border: isFailing ? '1px solid rgba(239,83,80,0.3)' : '1px solid transparent',
+                    }}>
+                      <span style={{
+                        flexShrink: 0, fontWeight: 700, fontSize: '12px', marginTop: '1px',
+                        color: c.passed ? 'var(--green)' : 'var(--red)',
+                      }}>
+                        {c.passed ? '✓' : '✗'}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                          <span style={{
+                            fontSize: '10px', fontWeight: 700, fontFamily: 'var(--font-mono)',
+                            color: 'var(--text-primary)',
+                          }}>
+                            {c.name}
+                          </span>
+                          {isRequired && (
+                            <span style={{
+                              fontSize: '9px', fontWeight: 600, padding: '1px 4px',
+                              borderRadius: '3px', textTransform: 'uppercase', letterSpacing: '0.05em',
+                              background: isFailing ? 'var(--red)' : 'rgba(41,98,255,0.15)',
+                              color: isFailing ? '#fff' : 'var(--blue)',
+                            }}>
+                              {c.verdict_role ? 'required' : 'must-fail'}
+                            </span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                          {c.description}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SectionHeader({ label }) {
+  return (
+    <div style={{
+      fontSize: '10px', fontWeight: 700, textTransform: 'uppercase',
+      letterSpacing: '0.08em', color: 'var(--text-muted)',
+      marginBottom: '6px', marginTop: '4px',
+    }}>
+      {label}
+    </div>
+  )
+}
+
+function AnalysisTable({ rows }) {
+  return (
+    <div style={{
+      border: '1px solid var(--border)', borderRadius: '6px',
+      overflow: 'hidden', marginBottom: '12px', fontSize: '11px',
+    }}>
+      {rows.map(([label, la], i) => (
+        <div key={label} style={{
+          display: 'flex', alignItems: 'center',
+          padding: '6px 10px',
+          background: i % 2 === 0 ? 'transparent' : 'var(--bg-raised)',
+          borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+        }}>
+          <span style={{ width: '80px', flexShrink: 0, color: 'var(--text-muted)', fontWeight: 600 }}>
+            {label}
+          </span>
+          <SignSlope sign={la.sign} slope={la.slope} value={la.value} />
+        </div>
+      ))}
     </div>
   )
 }

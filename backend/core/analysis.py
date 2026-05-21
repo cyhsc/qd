@@ -1,0 +1,194 @@
+# --------------------------------------------------------------------------------
+# Copyright (C) [2025] [Bumblebee Networks Inc.]
+# All rights reserved. Unauthorized use is prohibited.
+# --------------------------------------------------------------------------------
+import logging
+from dataclasses import dataclass
+from enum import Enum
+from typing import Sequence
+
+import numpy as np
+
+from core.technicals import calc_macd as _calc_macd, calc_rwb as _calc_rwb, calc_squeeze as _calc_squeeze
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+class Slope(str, Enum):
+    RISING  = "rising"
+    FALLING = "falling"
+    FLAT    = "flat"
+
+
+class Sign(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    ZERO     = "zero"
+
+
+class SqueezeState(str, Enum):
+    ON   = "on"
+    OFF  = "off"
+    NONE = "none"
+
+
+# ---------------------------------------------------------------------------
+# Result dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LineAnalysis:
+    """Sign + slope analysis for a single indicator series."""
+    sign:       Sign
+    slope:      Slope
+    value:      float
+    prev_value: float
+
+
+@dataclass
+class MACDAnalysis:
+    """Full MACD analysis result."""
+    macd:      LineAnalysis
+    signal:    LineAnalysis
+    histogram: LineAnalysis
+
+
+@dataclass
+class RWBAnalysis:
+    """Full RWB (Red-White-Blue) analysis result."""
+    fast_width:                  LineAnalysis
+    slow_width:                  LineAnalysis
+    rwb:                         LineAnalysis
+    fast_width_above_slow_width: bool
+
+
+@dataclass
+class SQZAnalysis:
+    """Full SQZ (Squeeze Momentum) analysis result."""
+    momentum:      LineAnalysis
+    squeeze_state: SqueezeState
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sign(value: float, zero_threshold: float = 1e-10) -> Sign:
+    if abs(value) <= zero_threshold:
+        return Sign.ZERO
+    return Sign.POSITIVE if value > 0 else Sign.NEGATIVE
+
+
+def _slope(current: float, previous: float, flat_threshold: float = 1e-10) -> Slope:
+    delta = current - previous
+    if abs(delta) <= flat_threshold:
+        return Slope.FLAT
+    return Slope.RISING if delta > 0 else Slope.FALLING
+
+
+def _analyze_series(series: list, flat_threshold: float = 1e-10) -> LineAnalysis:
+    """Build a LineAnalysis from the last two points of a [{time, value}] series."""
+    if len(series) < 2:
+        raise ValueError("Need at least 2 data points to determine slope.")
+    current  = float(series[-1]["value"])
+    previous = float(series[-2]["value"])
+    return LineAnalysis(
+        sign=_sign(current),
+        slope=_slope(current, previous, flat_threshold),
+        value=current,
+        prev_value=previous,
+    )
+
+
+# Maps the squeeze dot color produced by calc_squeeze back to a SqueezeState.
+# orange / red  → ON  (BB inside KC at the high / mid multiplier levels)
+# dark gray     → NONE (BB inside only the wide KC; partial squeeze)
+# green         → OFF  (BB outside all KC; squeeze fired)
+_SQZ_COLOR_TO_STATE: dict[str, SqueezeState] = {
+    '#ff9800': SqueezeState.ON,
+    '#ef5350': SqueezeState.ON,
+    '#434651': SqueezeState.NONE,
+    '#26a69a': SqueezeState.OFF,
+}
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def analyze_macd(
+    prices: Sequence[float],
+    fast_period:    int   = 12,
+    slow_period:    int   = 26,
+    signal_period:  int   = 9,
+    flat_threshold: float = 1e-10,
+) -> MACDAnalysis:
+    """
+    Analyse a MACD indicator.
+
+    Returns sign + slope for the MACD line, signal line, and histogram.
+    """
+    arr   = np.asarray(prices, dtype=float)
+    times = list(range(len(arr)))
+    data  = _calc_macd(arr, fast_period, slow_period, signal_period, times)
+
+    return MACDAnalysis(
+        macd=_analyze_series(data["macd_line"],   flat_threshold),
+        signal=_analyze_series(data["signal_line"], flat_threshold),
+        histogram=_analyze_series(data["histogram"],  flat_threshold),
+    )
+
+
+def analyze_rwb(
+    prices: Sequence[float],
+    flat_threshold: float = 1e-10,
+) -> RWBAnalysis:
+    """
+    Analyse an RWB (Red-White-Blue) indicator.
+
+    Returns sign + slope for fast_width, slow_width, and the rwb gap.
+    Uses the standard RWB periods (fast 3-5-7-10-12-15, slow 30-35-40-45-50-60).
+    """
+    arr   = np.asarray(prices, dtype=float)
+    times = list(range(len(arr)))
+    data  = _calc_rwb(arr, times)
+
+    fast_analysis = _analyze_series(data["fast_width"], flat_threshold)
+    slow_analysis = _analyze_series(data["slow_width"], flat_threshold)
+
+    return RWBAnalysis(
+        fast_width=fast_analysis,
+        slow_width=slow_analysis,
+        rwb=_analyze_series(data["rwb"], flat_threshold),
+        fast_width_above_slow_width=fast_analysis.value > slow_analysis.value,
+    )
+
+
+def analyze_sqz(
+    closes: Sequence[float],
+    highs:  Sequence[float],
+    lows:   Sequence[float],
+    flat_threshold: float = 1e-10,
+) -> SQZAnalysis:
+    """
+    Analyse a SQZ (Squeeze Momentum) indicator.
+
+    Returns sign + slope for the momentum histogram and the current squeeze state.
+    """
+    c     = np.asarray(closes, dtype=float)
+    h     = np.asarray(highs,  dtype=float)
+    l     = np.asarray(lows,   dtype=float)
+    times = list(range(len(c)))
+    data  = _calc_squeeze(c, h, l, times)
+
+    last_sqz_color = data["sqz"][-1]["color"] if data["sqz"] else '#26a69a'
+    state = _SQZ_COLOR_TO_STATE.get(last_sqz_color, SqueezeState.NONE)
+
+    return SQZAnalysis(
+        momentum=_analyze_series(data["mom"], flat_threshold),
+        squeeze_state=state,
+    )
