@@ -7,13 +7,13 @@ import { IndicatorPanel } from './components/IndicatorPanel'
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', '1Y', '2Y', '3Y', '5Y', '10Y', 'MAX']
 
-const INTRADAY_INTERVALS = ['1m', '2m', '5m', '15m', '30m', '1h', '90m']
+const INTRADAY_INTERVALS = ['1m', '5m', '15m', '30m', '1h']
 const DAILY_INTERVALS    = ['D', 'W', 'M']
 const INTERVAL_LABELS    = { D: 'Day', W: 'Week', M: 'Month' }
 
 const INTRADAY_MAX_DAYS = {
-  '1m': 7, '2m': 60, '5m': 60,
-  '15m': 60, '30m': 60, '90m': 60, '1h': 730,
+  '1m': 7, '5m': 60,
+  '15m': 60, '30m': 60, '1h': 730,
 }
 const RANGE_DAYS = {
   '1D': 1, '5D': 5, '1M': 30, '3M': 90,
@@ -99,6 +99,7 @@ export default function App() {
   const [guppyConfigs,  setGuppyConfigs]  = useState(() => lsJson('qd_guppy_configs',  []))
   const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
+  const [verdictRules,  setVerdictRules]  = useState(() => lsJson('qd_verdict_rules',  {}))
 
   // Pre-calculated indicator data from backend
   const [maData,      setMaData]      = useState({})
@@ -129,7 +130,8 @@ export default function App() {
     guppyConfigs,
     rwbConfigs,
     squeezeConfigs,
-  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
+    verdictRules,
+  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules])
 
   // Save preferences to backend (fire-and-forget)
   const savePrefs = useCallback((data) => {
@@ -163,6 +165,7 @@ export default function App() {
           if (data.rwbConfigs)     setRwbConfigs(data.rwbConfigs)
           if (data.squeezeConfigs) setSqueezeConfigs(data.squeezeConfigs)
           if (data.activeListId != null) setActiveListId(data.activeListId)
+          if (data.verdictRules)   setVerdictRules(data.verdictRules)
         } else {
           // First time — seed backend with current localStorage values
           savePrefs({
@@ -184,7 +187,7 @@ export default function App() {
   useEffect(() => {
     if (!prefsLoaded.current) return
     scheduleSave(prefsSnapshot())
-  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   useEffect(() => {
@@ -282,6 +285,14 @@ export default function App() {
     setSymbol(sym)
     fetchStock(sym, interval)
   }
+
+  const handleToggleRule = useCallback((conditionName, defaultRole) => {
+    setVerdictRules(prev => {
+      const effective = prev[conditionName] !== undefined ? prev[conditionName] : defaultRole
+      const next = effective !== null ? null : defaultRole
+      return { ...prev, [conditionName]: next }
+    })
+  }, [])
 
   const handleAnalysis = async () => {
     const sym = symbol || input.trim().toUpperCase()
@@ -630,6 +641,8 @@ export default function App() {
           loading={analysisLoading}
           error={analysisError}
           data={analysisData}
+          verdictRules={verdictRules}
+          onToggleRule={handleToggleRule}
           onClose={() => setAnalysisOpen(false)}
         />
       )}
@@ -654,7 +667,12 @@ function SignSlope({ sign, slope, value }) {
   )
 }
 
-function AnalysisModal({ loading, error, data, onClose }) {
+function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, onClose }) {
+  // Compute effective role for each condition: user override takes precedence over backend default
+  const effectiveRole = (c) => {
+    const r = verdictRules?.[c.name]
+    return r !== undefined ? r : c.verdict_role
+  }
   return (
     <div
       onClick={onClose}
@@ -710,18 +728,19 @@ function AnalysisModal({ loading, error, data, onClose }) {
             <>
               {/* Verdict banner */}
               {(() => {
-                const required = data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined)
-                const failing  = required.filter(c => c.passed !== c.verdict_role)
+                const required = data.conditions.filter(c => effectiveRole(c) !== null && effectiveRole(c) !== undefined)
+                const failing  = required.filter(c => c.passed !== effectiveRole(c))
                 const passing  = required.length - failing.length
+                const verdict  = failing.length === 0 && required.length > 0
                 return (
                   <div style={{
                     padding: '12px 16px', borderRadius: '8px', marginBottom: '16px',
-                    background: data.verdict ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.1)',
-                    border: `1px solid ${data.verdict ? 'var(--green)' : 'var(--red)'}`,
+                    background: verdict ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.1)',
+                    border: `1px solid ${verdict ? 'var(--green)' : 'var(--red)'}`,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: failing.length ? '8px' : 0 }}>
-                      <span style={{ fontSize: '20px', fontWeight: 700, color: data.verdict ? 'var(--green)' : 'var(--red)' }}>
-                        {data.verdict ? 'PASS' : 'FAIL'}
+                      <span style={{ fontSize: '20px', fontWeight: 700, color: verdict ? 'var(--green)' : 'var(--red)' }}>
+                        {verdict ? 'PASS' : 'FAIL'}
                       </span>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
                         {passing} / {required.length} required rules met
@@ -785,8 +804,9 @@ function AnalysisModal({ loading, error, data, onClose }) {
               <SectionHeader label="Conditions" />
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {data.conditions.map((c, i) => {
-                  const isRequired = c.verdict_role !== null && c.verdict_role !== undefined
-                  const isFailing  = isRequired && c.passed !== c.verdict_role
+                  const role       = effectiveRole(c)
+                  const isRequired = role !== null && role !== undefined
+                  const isFailing  = isRequired && c.passed !== role
                   return (
                     <div key={i} style={{
                       display: 'flex', alignItems: 'flex-start', gap: '8px',
@@ -810,16 +830,23 @@ function AnalysisModal({ loading, error, data, onClose }) {
                           }}>
                             {c.name}
                           </span>
-                          {isRequired && (
-                            <span style={{
-                              fontSize: '9px', fontWeight: 600, padding: '1px 4px',
+                          <button
+                            onClick={() => onToggleRule(c.name, c.verdict_role)}
+                            title={isRequired ? 'Click to make optional' : 'Click to make required'}
+                            style={{
+                              fontSize: '9px', fontWeight: 600, padding: '1px 5px',
                               borderRadius: '3px', textTransform: 'uppercase', letterSpacing: '0.05em',
-                              background: isFailing ? 'var(--red)' : 'rgba(41,98,255,0.15)',
-                              color: isFailing ? '#fff' : 'var(--blue)',
-                            }}>
-                              {c.verdict_role ? 'required' : 'must-fail'}
-                            </span>
-                          )}
+                              border: 'none', cursor: 'pointer',
+                              background: isRequired
+                                ? (isFailing ? 'var(--red)' : 'rgba(41,98,255,0.15)')
+                                : 'rgba(120,123,134,0.15)',
+                              color: isRequired
+                                ? (isFailing ? '#fff' : 'var(--blue)')
+                                : 'var(--text-muted)',
+                            }}
+                          >
+                            {isRequired ? (role ? 'required' : 'must-fail') : 'optional'}
+                          </button>
                         </div>
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                           {c.description}
