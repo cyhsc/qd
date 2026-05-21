@@ -1,7 +1,7 @@
 from .engine import Base, SessionLocal, engine, get_db
-from .models import CacheMeta, Price, Watchlist, WatchlistSymbol
+from .models import CacheMeta, Preferences, Price, Watchlist, WatchlistSymbol
 
 __all__ = [
     "Base", "SessionLocal", "engine", "get_db",
-    "CacheMeta", "Price", "Watchlist", "WatchlistSymbol",
+    "CacheMeta", "Preferences", "Price", "Watchlist", "WatchlistSymbol",
 ]

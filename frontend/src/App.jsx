@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { StockChart }     from './components/StockChart'
 import { Watchlist }      from './components/Watchlist'
 import { IndicatorPanel } from './components/IndicatorPanel'
@@ -57,7 +57,17 @@ function loadActiveListId() {
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  // Theme — applied immediately so there's no flash on load
+  // ── Helpers to read localStorage (used as fallback / initial seed) ──────────
+
+  function lsJson(key, fallback) {
+    try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback }
+    catch { return fallback }
+  }
+
+  // ── Theme ─────────────────────────────────────────────────────────────────
+  // Applied immediately from localStorage to avoid a flash; backend value
+  // overwrites it once preferences load.
+
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem('qd_theme') ?? 'light'
     document.documentElement.dataset.theme = saved
@@ -71,36 +81,25 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light')
 
-  // Chart state
-  const [input,     setInput]     = useState('')
-  const [symbol,    setSymbol]    = useState('')
-  const [range,     setRange]     = useState('1Y')
-  const [interval,  setInterval]  = useState('D')
-  const [info,      setInfo]      = useState(null)
-  const [candles,   setCandles]   = useState(null)
-  const [volume,    setVolume]    = useState(null)
-  const [loading,   setLoading]   = useState(false)
-  const [error,     setError]     = useState(null)
-  const [maConfigs, setMaConfigs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('qd_ma_configs') ?? 'null') ?? [] }
-    catch { return [] }
-  })
-  const [macdConfigs, setMacdConfigs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('qd_macd_configs') ?? 'null') ?? [] }
-    catch { return [] }
-  })
-  const [guppyConfigs, setGuppyConfigs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('qd_guppy_configs') ?? 'null') ?? [] }
-    catch { return [] }
-  })
-  const [rwbConfigs, setRwbConfigs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('qd_rwb_configs') ?? 'null') ?? [] }
-    catch { return [] }
-  })
-  const [squeezeConfigs, setSqueezeConfigs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('qd_squeeze_configs') ?? 'null') ?? [] }
-    catch { return [] }
-  })
+  // ── Chart / indicator config state ───────────────────────────────────────
+  // Initialised from localStorage so the UI is immediately usable; the backend
+  // load below may overwrite these once it resolves.
+
+  const [input,         setInput]         = useState('')
+  const [symbol,        setSymbol]        = useState('')
+  const [range,         setRange]         = useState('1Y')
+  const [interval,      setInterval]      = useState('D')
+  const [info,          setInfo]          = useState(null)
+  const [candles,       setCandles]       = useState(null)
+  const [volume,        setVolume]        = useState(null)
+  const [loading,       setLoading]       = useState(false)
+  const [error,         setError]         = useState(null)
+  const [maConfigs,     setMaConfigs]     = useState(() => lsJson('qd_ma_configs',     []))
+  const [macdConfigs,   setMacdConfigs]   = useState(() => lsJson('qd_macd_configs',   []))
+  const [guppyConfigs,  setGuppyConfigs]  = useState(() => lsJson('qd_guppy_configs',  []))
+  const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
+  const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
+
   // Pre-calculated indicator data from backend
   const [maData,      setMaData]      = useState({})
   const [guppyData,   setGuppyData]   = useState(null)
@@ -115,9 +114,77 @@ export default function App() {
   const [analysisError,   setAnalysisError]   = useState(null)
 
   // Watchlist state
-  const [watchlists,    setWatchlists]    = useState([])
-  const [activeListId,  setActiveListId]  = useState(loadActiveListId)
-  const [wlLoading,     setWlLoading]     = useState(true)
+  const [watchlists,   setWatchlists]   = useState([])
+  const [activeListId, setActiveListId] = useState(loadActiveListId)
+  const [wlLoading,    setWlLoading]    = useState(true)
+
+  // ── Backend preferences ───────────────────────────────────────────────────
+
+  // Build the full preferences object from current state
+  const prefsSnapshot = useCallback(() => ({
+    theme,
+    activeListId,
+    maConfigs,
+    macdConfigs,
+    guppyConfigs,
+    rwbConfigs,
+    squeezeConfigs,
+  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
+
+  // Save preferences to backend (fire-and-forget)
+  const savePrefs = useCallback((data) => {
+    fetch('/api/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data }),
+    }).catch(() => {})
+  }, [])
+
+  // Debounce ref — avoid hammering the backend on rapid config changes
+  const saveTimer = useRef(null)
+  const scheduleSave = useCallback((data) => {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => savePrefs(data), 800)
+  }, [savePrefs])
+
+  // Load preferences from backend on mount.
+  // If backend has no preferences yet, seed it with the current localStorage values.
+  const prefsLoaded = useRef(false)
+  useEffect(() => {
+    fetch('/api/preferences')
+      .then(r => r.json())
+      .then(({ data }) => {
+        if (data && Object.keys(data).length > 0) {
+          // Apply saved preferences
+          if (data.theme)          { setTheme(data.theme); document.documentElement.dataset.theme = data.theme }
+          if (data.maConfigs)      setMaConfigs(data.maConfigs)
+          if (data.macdConfigs)    setMacdConfigs(data.macdConfigs)
+          if (data.guppyConfigs)   setGuppyConfigs(data.guppyConfigs)
+          if (data.rwbConfigs)     setRwbConfigs(data.rwbConfigs)
+          if (data.squeezeConfigs) setSqueezeConfigs(data.squeezeConfigs)
+          if (data.activeListId != null) setActiveListId(data.activeListId)
+        } else {
+          // First time — seed backend with current localStorage values
+          savePrefs({
+            theme,
+            activeListId,
+            maConfigs,
+            macdConfigs,
+            guppyConfigs,
+            rwbConfigs,
+            squeezeConfigs,
+          })
+        }
+        prefsLoaded.current = true
+      })
+      .catch(() => { prefsLoaded.current = true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist to backend whenever any preference changes (skip the initial mount)
+  useEffect(() => {
+    if (!prefsLoaded.current) return
+    scheduleSave(prefsSnapshot())
+  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   useEffect(() => {
@@ -132,30 +199,6 @@ export default function App() {
       .catch(() => setWatchlists([]))
       .finally(() => setWlLoading(false))
   }, [])
-
-  useEffect(() => {
-    localStorage.setItem('qd_active_list_id', activeListId)
-  }, [activeListId])
-
-  useEffect(() => {
-    localStorage.setItem('qd_ma_configs', JSON.stringify(maConfigs))
-  }, [maConfigs])
-
-  useEffect(() => {
-    localStorage.setItem('qd_macd_configs', JSON.stringify(macdConfigs))
-  }, [macdConfigs])
-
-  useEffect(() => {
-    localStorage.setItem('qd_guppy_configs', JSON.stringify(guppyConfigs))
-  }, [guppyConfigs])
-
-  useEffect(() => {
-    localStorage.setItem('qd_rwb_configs', JSON.stringify(rwbConfigs))
-  }, [rwbConfigs])
-
-  useEffect(() => {
-    localStorage.setItem('qd_squeeze_configs', JSON.stringify(squeezeConfigs))
-  }, [squeezeConfigs])
 
   // ── Fetch chart data ──────────────────────────────────────────────────────
 
@@ -667,9 +710,9 @@ function AnalysisModal({ loading, error, data, onClose }) {
             <>
               {/* Verdict banner */}
               {(() => {
-                const failing = data.conditions.filter(
-                  c => c.verdict_role !== null && c.verdict_role !== undefined && c.passed !== c.verdict_role
-                )
+                const required = data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined)
+                const failing  = required.filter(c => c.passed !== c.verdict_role)
+                const passing  = required.length - failing.length
                 return (
                   <div style={{
                     padding: '12px 16px', borderRadius: '8px', marginBottom: '16px',
@@ -681,8 +724,7 @@ function AnalysisModal({ loading, error, data, onClose }) {
                         {data.verdict ? 'PASS' : 'FAIL'}
                       </span>
                       <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                        {data.score} / {data.total} conditions passed
-                        {' · '}{Object.keys(data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined)).length || failing.length + data.conditions.filter(c => c.verdict_role !== null && c.verdict_role !== undefined && c.passed === c.verdict_role).length} required rules
+                        {passing} / {required.length} required rules met
                       </span>
                     </div>
                     {failing.length > 0 && (

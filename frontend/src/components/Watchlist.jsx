@@ -175,53 +175,75 @@ export function Watchlist({
         onChange={handleFileChange}
       />
 
-      {/* ── List tabs header ── */}
-      <div style={{ padding: '10px 12px 0', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          marginBottom: '8px',
-        }}>
-          <span style={{
-            fontSize: '10px', color: 'var(--text-muted)',
-            textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600,
-          }}>
-            Watchlists
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-            {/* Import from file */}
+      {/* ── Header ── */}
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+        {/* Dropdown row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: creatingList ? '8px' : 0 }}>
+          <select
+            value={activeListId ?? ''}
+            onChange={e => onSelectList(e.target.value)}
+            style={{
+              flex: 1, height: '28px',
+              background: 'var(--bg-raised)', border: '1px solid var(--border)',
+              borderRadius: '4px', padding: '0 6px',
+              color: 'var(--text-primary)', fontSize: '12px',
+              cursor: 'pointer', outline: 'none',
+            }}
+          >
+            {lists.map(list => (
+              <option key={list.id} value={list.id}>{list.name}</option>
+            ))}
+          </select>
+
+          {/* Delete active list */}
+          {lists.length > 1 && (
             <button
-              onClick={() => !importing && fileInputRef.current?.click()}
-              title="Import list from .txt file"
-              disabled={importing}
+              onClick={() => onDeleteList(activeListId)}
+              title="Delete list"
               style={{
                 background: 'none', border: 'none',
-                color: 'var(--text-muted)',
-                cursor: importing ? 'not-allowed' : 'pointer',
-                padding: '2px 3px', lineHeight: 1,
-                display: 'flex', alignItems: 'center',
-                opacity: importing ? 0.4 : 1,
+                color: 'var(--text-muted)', fontSize: '16px',
+                cursor: 'pointer', padding: '0 3px', lineHeight: 1,
               }}
             >
-              <IconUpload />
+              ×
             </button>
-            {/* New list */}
-            <button
-              onClick={() => { setCreatingList(v => !v); setListNameInput('') }}
-              title="New list"
-              style={{
-                background: 'none', border: 'none',
-                color: creatingList ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontSize: '18px', lineHeight: 1, cursor: 'pointer', padding: '0 2px',
-              }}
-            >
-              +
-            </button>
-          </div>
+          )}
+
+          {/* Import from file */}
+          <button
+            onClick={() => !importing && fileInputRef.current?.click()}
+            title="Import list from .txt file"
+            disabled={importing}
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--text-muted)',
+              cursor: importing ? 'not-allowed' : 'pointer',
+              padding: '2px 3px', lineHeight: 1,
+              display: 'flex', alignItems: 'center',
+              opacity: importing ? 0.4 : 1,
+            }}
+          >
+            <IconUpload />
+          </button>
+
+          {/* New list */}
+          <button
+            onClick={() => { setCreatingList(v => !v); setListNameInput('') }}
+            title="New list"
+            style={{
+              background: 'none', border: 'none',
+              color: creatingList ? 'var(--text-primary)' : 'var(--text-muted)',
+              fontSize: '18px', lineHeight: 1, cursor: 'pointer', padding: '0 2px',
+            }}
+          >
+            +
+          </button>
         </div>
 
         {/* New list name input */}
         {creatingList && (
-          <form onSubmit={handleCreateList} style={{ marginBottom: '8px', display: 'flex', gap: '4px' }}>
+          <form onSubmit={handleCreateList} style={{ display: 'flex', gap: '4px' }}>
             <input
               autoFocus
               value={listNameInput}
@@ -244,39 +266,6 @@ export function Watchlist({
             </button>
           </form>
         )}
-
-        {/* Tab row */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', paddingBottom: '8px' }}>
-          {lists.map(list => (
-            <div key={list.id} style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
-              <button
-                onClick={() => onSelectList(list.id)}
-                style={{
-                  height: '22px', padding: '0 8px',
-                  border: 'none', borderRadius: '4px',
-                  fontSize: '11px', fontWeight: 500, cursor: 'pointer',
-                  background: list.id === activeListId ? 'var(--bg-raised)' : 'transparent',
-                  color: list.id === activeListId ? 'var(--text-primary)' : 'var(--text-muted)',
-                }}
-              >
-                {list.name}
-              </button>
-              {lists.length > 1 && (
-                <button
-                  onClick={() => onDeleteList(list.id)}
-                  title="Delete list"
-                  style={{
-                    background: 'none', border: 'none',
-                    color: 'var(--text-muted)', fontSize: '12px',
-                    cursor: 'pointer', padding: '0 1px', lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* ── Symbol list ── */}

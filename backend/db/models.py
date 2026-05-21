@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Column, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .engine import Base
@@ -37,6 +37,14 @@ class WatchlistSymbol(Base):
     watchlist    = relationship("Watchlist", back_populates="symbols")
 
     __table_args__ = (UniqueConstraint("watchlist_id", "symbol"),)
+
+
+class Preferences(Base):
+    """Single-row table storing global chart preferences (id always 1)."""
+    __tablename__ = "preferences"
+
+    id   = Column(Integer, primary_key=True, default=1)
+    data = Column(JSON, nullable=False, default=dict)
 
 
 class Price(Base):
