@@ -64,6 +64,7 @@ function IconUpload() {
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 
 export function Watchlist({
+  width = 220,
   lists,
   activeListId,
   activeSymbol,
@@ -159,10 +160,9 @@ export function Watchlist({
 
   return (
     <div style={{
-      width: '220px', flexShrink: 0,
+      width: `${width}px`, flexShrink: 0,
       display: 'flex', flexDirection: 'column',
       background: 'var(--bg-panel)',
-      borderRight: '1px solid var(--border)',
       overflow: 'hidden',
     }}>
 

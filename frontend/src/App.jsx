@@ -118,6 +118,30 @@ export default function App() {
   const [watchlists,   setWatchlists]   = useState([])
   const [activeListId, setActiveListId] = useState(loadActiveListId)
   const [wlLoading,    setWlLoading]    = useState(true)
+  const [sidebarWidth, setSidebarWidth] = useState(() => lsJson('qd_sidebar_width', 220))
+
+  // Sidebar resize drag
+  const sidebarDragRef = useRef(null)
+  const handleSidebarMouseDown = useCallback((e) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = sidebarWidth
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    const onMove = (ev) => {
+      const next = Math.max(140, Math.min(400, startW + ev.clientX - startX))
+      setSidebarWidth(next)
+    }
+    const onUp = () => {
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setSidebarWidth(w => { localStorage.setItem('qd_sidebar_width', w); return w })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [sidebarWidth])
 
   // ── Backend preferences ───────────────────────────────────────────────────
 
@@ -432,6 +456,7 @@ export default function App() {
 
       {/* ── Watchlist sidebar ── */}
       <Watchlist
+        width={sidebarWidth}
         lists={watchlists}
         activeListId={activeListId}
         activeSymbol={symbol}
@@ -443,6 +468,19 @@ export default function App() {
         onSelectSymbol={selectSymbol}
         onDeleteSymbol={handleDeleteSymbol}
         onAddSymbol={handleAddSymbol}
+      />
+
+      {/* ── Sidebar resize handle ── */}
+      <div
+        ref={sidebarDragRef}
+        onMouseDown={handleSidebarMouseDown}
+        style={{
+          width: '4px', flexShrink: 0, cursor: 'col-resize',
+          background: 'var(--border)',
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--blue)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'var(--border)'}
       />
 
       {/* ── Main content ── */}
