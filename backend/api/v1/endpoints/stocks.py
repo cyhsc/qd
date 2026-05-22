@@ -280,6 +280,17 @@ async def get_info(symbol: str):
 
     if not info or len(info) < 5:
         raise HTTPException(status_code=404, detail=f"Symbol '{sym}' not found")
+    def _fmt_large(v):
+        if v is None:
+            return None
+        if v >= 1_000_000_000_000:
+            return f"{v / 1_000_000_000_000:.2f}T"
+        if v >= 1_000_000_000:
+            return f"{v / 1_000_000_000:.2f}B"
+        if v >= 1_000_000:
+            return f"{v / 1_000_000:.2f}M"
+        return str(int(v))
+
     return {
         "symbol":        sym,
         "name":          info.get("longName") or info.get("shortName") or sym,
@@ -289,6 +300,27 @@ async def get_info(symbol: str):
         "prev_close":    info.get("previousClose") or info.get("regularMarketPreviousClose"),
         "sector":        info.get("sector") or None,
         "industry":      info.get("industry") or None,
+        # Overview extras
+        "description":        info.get("longBusinessSummary") or None,
+        "website":            info.get("website") or None,
+        "country":            info.get("country") or None,
+        "employees":          info.get("fullTimeEmployees") or None,
+        "market_cap":         _fmt_large(info.get("marketCap")),
+        "trailing_pe":        round(info["trailingPE"], 2) if info.get("trailingPE") else None,
+        "forward_pe":         round(info["forwardPE"],  2) if info.get("forwardPE")  else None,
+        "price_to_book":      round(info["priceToBook"], 2) if info.get("priceToBook") else None,
+        "dividend_yield":     round(info["dividendYield"] * 100, 2) if info.get("dividendYield") else None,
+        "52w_high":           info.get("fiftyTwoWeekHigh"),
+        "52w_low":            info.get("fiftyTwoWeekLow"),
+        "avg_volume":         _fmt_large(info.get("averageVolume")),
+        "revenue":            _fmt_large(info.get("totalRevenue")),
+        "gross_profit":       _fmt_large(info.get("grossProfits")),
+        "ebitda":             _fmt_large(info.get("ebitda")),
+        "debt_to_equity":     round(info["debtToEquity"], 2) if info.get("debtToEquity") else None,
+        "return_on_equity":   round(info["returnOnEquity"] * 100, 2) if info.get("returnOnEquity") else None,
+        "return_on_assets":   round(info["returnOnAssets"] * 100, 2) if info.get("returnOnAssets") else None,
+        "revenue_growth":     round(info["revenueGrowth"] * 100, 2) if info.get("revenueGrowth") else None,
+        "earnings_growth":    round(info["earningsGrowth"] * 100, 2) if info.get("earningsGrowth") else None,
     }
 
 

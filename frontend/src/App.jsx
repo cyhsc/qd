@@ -108,6 +108,8 @@ export default function App() {
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
 
+  const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview'
+
   // Analysis modal state
   const [analysisOpen,    setAnalysisOpen]    = useState(false)
   const [analysisData,    setAnalysisData]    = useState(null)
@@ -313,7 +315,7 @@ export default function App() {
   const handleToggleRule = useCallback((conditionName, defaultRole) => {
     setVerdictRules(prev => {
       const effective = prev[conditionName] !== undefined ? prev[conditionName] : defaultRole
-      const next = effective !== null ? null : defaultRole
+      const next = effective !== null ? null : (defaultRole !== null ? defaultRole : true)
       return { ...prev, [conditionName]: next }
     })
   }, [])
@@ -515,23 +517,70 @@ export default function App() {
             }}>
               Go
             </button>
+          </form>
+
+          <button
+            onClick={toggleTheme}
+            title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+            style={{
+              marginLeft: 'auto',
+              width: '32px', height: '32px', padding: 0,
+              border: 'none', borderRadius: '6px',
+              background: 'transparent',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'color 0.15s',
+            }}
+          >
+            {theme === 'light' ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="5"/>
+                <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            )}
+          </button>
+        </header>
+
+        {/* ── Tabs ── */}
+        <div style={{
+          display: 'flex', alignItems: 'flex-end',
+          background: 'var(--bg-panel)',
+          borderBottom: '1px solid var(--border)',
+          padding: '0 20px', flexShrink: 0, height: '36px',
+        }}>
+          {['chart', 'overview'].map(tab => (
             <button
-              type="button"
-              onClick={handleAnalysis}
-              disabled={!symbol && !input.trim()}
+              key={tab}
+              onClick={() => setMainTab(tab)}
               style={{
-                height: '32px', padding: '0 14px',
-                background: '#f57c00',
-                border: 'none',
-                borderRadius: '6px', color: '#fff',
-                fontSize: '12px', fontWeight: 600, cursor: 'pointer',
-                opacity: (!symbol && !input.trim()) ? 0.4 : 1,
+                height: '36px', padding: '0 14px',
+                background: 'none', border: 'none',
+                borderBottom: mainTab === tab ? '2px solid var(--blue)' : '2px solid transparent',
+                color: mainTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
+                fontSize: '12px', fontWeight: mainTab === tab ? 600 : 400,
+                cursor: 'pointer', textTransform: 'capitalize',
+                transition: 'color 0.1s',
               }}
             >
-              Analysis
+              {tab}
             </button>
-          </form>
-        </header>
+          ))}
+        </div>
+
+        {mainTab === 'overview' && <OverviewPanel info={info} />}
+
+        {mainTab === 'chart' && <>
 
         {/* ── Toolbar: interval (left) + range (right) ── */}
         <div style={{
@@ -562,6 +611,22 @@ export default function App() {
               )
             })}
             <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+            <button
+              type="button"
+              onClick={handleAnalysis}
+              disabled={!symbol && !input.trim()}
+              title="Run analysis on current symbol"
+              style={{
+                height: '24px', padding: '0 10px',
+                background: '#f57c00', border: 'none',
+                borderRadius: '4px', color: '#fff',
+                fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                opacity: (!symbol && !input.trim()) ? 0.4 : 1,
+              }}
+            >
+              Analysis
+            </button>
+            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
             <IndicatorPanel
               maConfigs={maConfigs}       onMaChange={setMaConfigs}
               macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
@@ -569,38 +634,6 @@ export default function App() {
               rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
               squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
             />
-            <button
-              onClick={toggleTheme}
-              title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
-              style={{
-                width: '28px', height: '28px', padding: 0,
-                border: 'none', borderRadius: '5px',
-                background: 'transparent',
-                color: 'var(--text-secondary)',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'color 0.15s',
-              }}
-            >
-              {theme === 'light' ? (
-                /* Moon icon */
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-                </svg>
-              ) : (
-                /* Sun icon */
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="5"/>
-                  <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-              )}
-            </button>
           </div>
         </div>
 
@@ -671,6 +704,8 @@ export default function App() {
             />
           )}
         </main>
+
+        </>}
       </div>
 
       {/* ── Analysis modal ── */}
@@ -977,6 +1012,116 @@ function Placeholder({ text }) {
       color: 'var(--text-muted)', fontSize: '13px',
     }}>
       {text}
+    </div>
+  )
+}
+
+// ── Overview panel ────────────────────────────────────────────────────────────
+
+function OverviewStat({ label, value, color }) {
+  if (value == null) return null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+      <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        {label}
+      </span>
+      <span style={{ fontSize: '13px', fontWeight: 600, color: color || 'var(--text-primary)' }}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+function OverviewPanel({ info }) {
+  if (!info) {
+    return (
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+        Search for a symbol to see overview
+      </div>
+    )
+  }
+
+  const stats = [
+    { label: 'Market Cap',      value: info.market_cap },
+    { label: 'Trailing P/E',    value: info.trailing_pe },
+    { label: 'Forward P/E',     value: info.forward_pe },
+    { label: 'Price / Book',    value: info.price_to_book },
+    { label: 'Dividend Yield',  value: info.dividend_yield != null ? `${info.dividend_yield}%` : null },
+    { label: '52W High',        value: info['52w_high'] },
+    { label: '52W Low',         value: info['52w_low'] },
+    { label: 'Avg Volume',      value: info.avg_volume },
+    { label: 'Revenue',         value: info.revenue },
+    { label: 'Gross Profit',    value: info.gross_profit },
+    { label: 'EBITDA',          value: info.ebitda },
+    { label: 'Debt / Equity',   value: info.debt_to_equity },
+    { label: 'ROE',             value: info.return_on_equity != null ? `${info.return_on_equity}%` : null,
+      color: info.return_on_equity > 0 ? 'var(--green)' : info.return_on_equity < 0 ? 'var(--red)' : undefined },
+    { label: 'ROA',             value: info.return_on_assets != null ? `${info.return_on_assets}%` : null,
+      color: info.return_on_assets > 0 ? 'var(--green)' : info.return_on_assets < 0 ? 'var(--red)' : undefined },
+    { label: 'Revenue Growth',  value: info.revenue_growth != null ? `${info.revenue_growth}%` : null,
+      color: info.revenue_growth > 0 ? 'var(--green)' : info.revenue_growth < 0 ? 'var(--red)' : undefined },
+    { label: 'Earnings Growth', value: info.earnings_growth != null ? `${info.earnings_growth}%` : null,
+      color: info.earnings_growth > 0 ? 'var(--green)' : info.earnings_growth < 0 ? 'var(--red)' : undefined },
+    { label: 'Employees',       value: info.employees?.toLocaleString() },
+    { label: 'Country',         value: info.country },
+  ]
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+      {/* Name + meta */}
+      <div style={{ marginBottom: '20px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '4px' }}>
+          <span style={{ fontSize: '20px', fontWeight: 700 }}>{info.symbol}</span>
+          <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>{info.name}</span>
+          {info.exchange && (
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{info.exchange}</span>
+          )}
+        </div>
+        {info.sector && (
+          <span style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+            {info.sector}{info.industry ? ` · ${info.industry}` : ''}
+          </span>
+        )}
+        {info.website && (
+          <a href={info.website} target="_blank" rel="noreferrer"
+            style={{ display: 'block', fontSize: '11px', color: 'var(--blue)', marginTop: '4px' }}>
+            {info.website}
+          </a>
+        )}
+      </div>
+
+      {/* Stats grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+        gap: '16px 24px',
+        marginBottom: '24px',
+        padding: '16px',
+        background: 'var(--bg-raised)',
+        borderRadius: '8px',
+        border: '1px solid var(--border)',
+      }}>
+        {stats.map(s => <OverviewStat key={s.label} label={s.label} value={s.value} color={s.color} />)}
+      </div>
+
+      {/* Description */}
+      {info.description && (
+        <div>
+          <div style={{
+            fontSize: '10px', fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: '8px',
+          }}>
+            About
+          </div>
+          <p style={{
+            fontSize: '13px', lineHeight: 1.7,
+            color: 'var(--text-secondary)', margin: 0,
+            maxWidth: '800px',
+          }}>
+            {info.description}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
