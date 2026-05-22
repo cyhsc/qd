@@ -108,10 +108,13 @@ export default function App() {
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
 
-  const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview' | 'financials'
+  const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview' | 'financials' | 'dividends'
   const [financialsData,    setFinancialsData]    = useState(null)
   const [financialsLoading, setFinancialsLoading] = useState(false)
   const [financialsSymbol,  setFinancialsSymbol]  = useState(null)
+  const [dividendsData,     setDividendsData]     = useState(null)
+  const [dividendsLoading,  setDividendsLoading]  = useState(false)
+  const [dividendsSymbol,   setDividendsSymbol]   = useState(null)
 
   // Analysis modal state
   const [analysisOpen,    setAnalysisOpen]    = useState(false)
@@ -329,16 +332,30 @@ export default function App() {
     }
   }, [financialsSymbol])
 
+  const fetchDividends = useCallback(async (sym) => {
+    if (dividendsSymbol === sym) return
+    setDividendsLoading(true)
+    setDividendsData(null)
+    try {
+      const res = await fetch(`/api/stocks/${sym}/dividends`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setDividendsData(await res.json())
+      setDividendsSymbol(sym)
+    } catch { /* silently show empty */ } finally {
+      setDividendsLoading(false)
+    }
+  }, [dividendsSymbol])
+
   const handleTabChange = useCallback((tab) => {
     setMainTab(tab)
     if (tab === 'financials' && symbol) fetchFinancials(symbol)
-  }, [symbol, fetchFinancials])
+    if (tab === 'dividends'  && symbol) fetchDividends(symbol)
+  }, [symbol, fetchFinancials, fetchDividends])
 
-  // Reload financials if symbol changes while on financials tab
+  // Reload lazy tabs if symbol changes while on that tab
   useEffect(() => {
-    if (mainTab === 'financials' && symbol && financialsSymbol !== symbol) {
-      fetchFinancials(symbol)
-    }
+    if (mainTab === 'financials' && symbol && financialsSymbol !== symbol) fetchFinancials(symbol)
+    if (mainTab === 'dividends'  && symbol && dividendsSymbol  !== symbol) fetchDividends(symbol)
   }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggleRule = useCallback((conditionName, defaultRole) => {
@@ -588,7 +605,7 @@ export default function App() {
           borderBottom: '1px solid var(--border)',
           padding: '0 20px', flexShrink: 0, height: '36px',
         }}>
-          {['chart', 'overview', 'financials'].map(tab => (
+          {['chart', 'overview', 'financials', 'dividends'].map(tab => (
             <button
               key={tab}
               onClick={() => handleTabChange(tab)}
@@ -609,6 +626,7 @@ export default function App() {
 
         {mainTab === 'overview' && <OverviewPanel info={info} />}
         {mainTab === 'financials' && <FinancialsPanel data={financialsData} loading={financialsLoading} symbol={symbol} />}
+        {mainTab === 'dividends'  && <DividendsPanel  data={dividendsData}  loading={dividendsLoading}  symbol={symbol} />}
 
         {mainTab === 'chart' && <>
 
@@ -1076,7 +1094,7 @@ function OverviewPanel({ info }) {
     { label: 'Trailing P/E',    value: info.trailing_pe },
     { label: 'Forward P/E',     value: info.forward_pe },
     { label: 'Price / Book',    value: info.price_to_book },
-    { label: 'Dividend Yield',  value: info.dividend_yield != null ? `${info.dividend_yield}%` : null },
+    { label: 'TTM Yield',       value: info.dividend_yield != null ? `${info.dividend_yield.toFixed(2)}%` : null },
     { label: '52W High',        value: info['52w_high'] },
     { label: '52W Low',         value: info['52w_low'] },
     { label: 'Avg Volume',      value: info.avg_volume },
@@ -1484,6 +1502,127 @@ function FinancialsPanel({ data, loading, symbol }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 28px' }}>
         <FinancialTable table={table} stmtKey={subTab} collapsed={collapsed} onToggle={onToggle} />
       </div>
+    </div>
+  )
+}
+
+// ── Dividends panel ───────────────────────────────────────────────────────────
+
+function DividendsPanel({ data, loading, symbol }) {
+  if (!symbol) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      Search for a symbol to see dividend information
+    </div>
+  )
+  if (loading) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      Loading dividend data…
+    </div>
+  )
+  if (!data) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      No data available
+    </div>
+  )
+
+  const noDividends = !data.annual_rate && (!data.history || data.history.length === 0)
+
+  const statCards = [
+    { label: 'TTM Dividends',      value: data.annual_rate   != null ? `$${data.annual_rate.toFixed(4)}` : null },
+    { label: 'TTM Yield',          value: data.dividend_yield != null ? `${data.dividend_yield.toFixed(2)}%` : null },
+    { label: '5Y Avg Yield',       value: data.five_year_avg_yield != null ? `${data.five_year_avg_yield.toFixed(2)}%` : null },
+    { label: 'Payout Ratio',       value: data.payout_ratio  != null ? `${(data.payout_ratio * 100).toFixed(1)}%` : null },
+    { label: 'Ex-Dividend Date',   value: data.ex_dividend_date ?? null },
+    { label: 'Last Dividend',      value: data.last_dividend  != null ? `$${data.last_dividend.toFixed(4)}` : null },
+    { label: 'Frequency',          value: data.frequency ?? null },
+  ].filter(s => s.value != null)
+
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '24px 28px' }}>
+      {noDividends ? (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: '60px 0', gap: '8px',
+        }}>
+          <span style={{ fontSize: '32px' }}>—</span>
+          <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            {data.symbol} does not pay a dividend
+          </span>
+        </div>
+      ) : (
+        <>
+          {/* Stats row */}
+          {statCards.length > 0 && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+              gap: '12px 24px',
+              marginBottom: '32px',
+              padding: '16px 20px',
+              background: 'var(--bg-raised)',
+              borderRadius: '8px',
+              border: '1px solid var(--border)',
+            }}>
+              {statCards.map(({ label, value }) => (
+                <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {label}
+                  </span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Payment history */}
+          {data.history?.length > 0 && (
+            <>
+              <div style={{
+                fontSize: '10px', fontWeight: 700, textTransform: 'uppercase',
+                letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: '10px',
+              }}>
+                Payment History
+              </div>
+              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: '520px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                    {['Ex-Date', 'Amount', 'Change'].map(h => (
+                      <th key={h} style={{
+                        textAlign: h === 'Ex-Date' ? 'left' : 'right',
+                        padding: '6px 16px 10px ' + (h === 'Ex-Date' ? '0' : '16px'),
+                        fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)',
+                      }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.history.map((row, i) => (
+                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {row.date}
+                      </td>
+                      <td style={{ textAlign: 'right', padding: '8px 16px', fontSize: '12px', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {row.amount != null ? `$${row.amount.toFixed(4)}` : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right', padding: '8px 0 8px 16px', fontSize: '11px' }}>
+                        {row.change != null ? (
+                          <span style={{ color: row.change >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                            {row.change >= 0 ? '▲' : '▼'} {Math.abs(row.change).toFixed(2)}%
+                          </span>
+                        ) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }

@@ -264,16 +264,36 @@ async def get_indicators(
 async def get_info(symbol: str):
     sym = symbol.upper()
     loop = asyncio.get_event_loop()
+
+    def _fetch_info():
+        import datetime as dt, math
+        t    = yf.Ticker(sym)
+        info = t.info or {}
+        divs = t.dividends
+
+        ttm_yield = None
+        if divs is not None and not divs.empty:
+            try:
+                cutoff   = dt.datetime.now(tz=divs.index.tz) - dt.timedelta(days=365)
+                ttm_divs = divs[divs.index >= cutoff]
+                if not ttm_divs.empty:
+                    ttm_total = float(ttm_divs.sum())
+                    price = info.get("currentPrice") or info.get("regularMarketPrice")
+                    if price and float(price) > 0:
+                        ttm_yield = round(ttm_total / float(price) * 100, 4)
+            except Exception:
+                pass
+
+        return info, ttm_yield
+
     try:
-        # yf.Ticker.info is a blocking network call — run in a thread with a timeout
-        # so it can never hang the event loop or stall other requests indefinitely.
-        info = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: yf.Ticker(sym).info),
-            timeout=12.0,
+        info, ttm_yield = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch_info),
+            timeout=15.0,
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=408,
-                            detail=f"Timed out fetching info for '{sym}' (>12 s)")
+                            detail=f"Timed out fetching info for '{sym}' (>15 s)")
     except Exception as exc:
         raise HTTPException(status_code=502,
                             detail=f"Failed to fetch info for '{sym}': {exc}")
@@ -309,7 +329,7 @@ async def get_info(symbol: str):
         "trailing_pe":        round(info["trailingPE"], 2) if info.get("trailingPE") else None,
         "forward_pe":         round(info["forwardPE"],  2) if info.get("forwardPE")  else None,
         "price_to_book":      round(info["priceToBook"], 2) if info.get("priceToBook") else None,
-        "dividend_yield":     round(info["dividendYield"] * 100, 2) if info.get("dividendYield") else None,
+        "dividend_yield":     ttm_yield,
         "52w_high":           info.get("fiftyTwoWeekHigh"),
         "52w_low":            info.get("fiftyTwoWeekLow"),
         "avg_volume":         _fmt_large(info.get("averageVolume")),
@@ -377,6 +397,98 @@ async def get_screen(symbol: str):
         },
         "report": result.report,
     }
+
+
+@router.get("/{symbol}/dividends")
+async def get_dividends(symbol: str):
+    sym  = symbol.upper()
+    loop = asyncio.get_event_loop()
+
+    def _fetch():
+        import math
+        t = yf.Ticker(sym)
+        info = t.info or {}
+        divs = t.dividends  # pandas Series: index=date, value=amount
+
+        def _sf(v):
+            try:
+                f = float(v)
+                return None if math.isnan(f) or math.isinf(f) else f
+            except (TypeError, ValueError):
+                return None
+
+        # Build payment history newest-first
+        history = []
+        if divs is not None and not divs.empty:
+            prev = None
+            for date, amount in reversed(list(divs.items())):
+                amt = _sf(amount)
+                chg = None
+                if amt is not None and prev is not None and prev != 0:
+                    chg = round((amt - prev) / abs(prev) * 100, 2)
+                history.append({
+                    "date":   str(date.date()) if hasattr(date, "date") else str(date),
+                    "amount": amt,
+                    "change": chg,
+                })
+                prev = amt
+
+        ex_div = info.get("exDividendDate")
+        if ex_div:
+            import datetime
+            try:
+                ex_div = str(datetime.datetime.fromtimestamp(ex_div).date())
+            except Exception:
+                ex_div = str(ex_div)
+
+        # TTM dividend yield: sum payments in the trailing 12 months / current price
+        import datetime as dt
+        ttm_yield = None
+        ttm_total = None
+        if divs is not None and not divs.empty:
+            cutoff = dt.datetime.now(tz=divs.index.tz) - dt.timedelta(days=365)
+            ttm_divs = divs[divs.index >= cutoff]
+            if not ttm_divs.empty:
+                ttm_total = float(ttm_divs.sum())
+                price = _sf(info.get("currentPrice") or info.get("regularMarketPrice"))
+                if price and price > 0:
+                    ttm_yield = round(ttm_total / price * 100, 4)
+
+        raw_rate = info.get("dividendRate")
+        if raw_rate is None:
+            raw_rate = info.get("trailingAnnualDividendRate")
+
+        return {
+            "symbol":           sym,
+            "dividend_yield":   ttm_yield,
+            "annual_rate":      ttm_total if ttm_total is not None else _sf(raw_rate),
+            "payout_ratio":     _sf(info.get("payoutRatio")),
+            "ex_dividend_date": ex_div,
+            "five_year_avg_yield": _sf(info.get("fiveYearAvgDividendYield")),
+            "last_dividend":    _sf(info.get("lastDividendValue")),
+            "frequency":        info.get("dividendFrequency") or _infer_frequency(divs),
+            "history":          history,
+        }
+
+    def _infer_frequency(divs):
+        if divs is None or len(divs) < 2:
+            return None
+        import pandas as pd
+        dates = divs.index.sort_values()
+        avg_days = (dates[-1] - dates[0]).days / max(len(dates) - 1, 1)
+        if avg_days < 45:   return "Monthly"
+        if avg_days < 100:  return "Quarterly"
+        if avg_days < 200:  return "Semi-Annual"
+        return "Annual"
+
+    try:
+        result = await asyncio.wait_for(loop.run_in_executor(None, _fetch), timeout=20.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail=f"Timed out fetching dividends for '{sym}'")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch dividends for '{sym}': {exc}")
+
+    return result
 
 
 @router.get("/{symbol}/financials")
