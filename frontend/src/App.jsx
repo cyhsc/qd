@@ -108,7 +108,10 @@ export default function App() {
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
 
-  const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview'
+  const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview' | 'financials'
+  const [financialsData,    setFinancialsData]    = useState(null)
+  const [financialsLoading, setFinancialsLoading] = useState(false)
+  const [financialsSymbol,  setFinancialsSymbol]  = useState(null)
 
   // Analysis modal state
   const [analysisOpen,    setAnalysisOpen]    = useState(false)
@@ -311,6 +314,32 @@ export default function App() {
     setSymbol(sym)
     fetchStock(sym, interval)
   }
+
+  const fetchFinancials = useCallback(async (sym) => {
+    if (financialsSymbol === sym) return // already loaded
+    setFinancialsLoading(true)
+    setFinancialsData(null)
+    try {
+      const res = await fetch(`/api/stocks/${sym}/financials`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setFinancialsData(await res.json())
+      setFinancialsSymbol(sym)
+    } catch { /* silently show empty */ } finally {
+      setFinancialsLoading(false)
+    }
+  }, [financialsSymbol])
+
+  const handleTabChange = useCallback((tab) => {
+    setMainTab(tab)
+    if (tab === 'financials' && symbol) fetchFinancials(symbol)
+  }, [symbol, fetchFinancials])
+
+  // Reload financials if symbol changes while on financials tab
+  useEffect(() => {
+    if (mainTab === 'financials' && symbol && financialsSymbol !== symbol) {
+      fetchFinancials(symbol)
+    }
+  }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggleRule = useCallback((conditionName, defaultRole) => {
     setVerdictRules(prev => {
@@ -559,10 +588,10 @@ export default function App() {
           borderBottom: '1px solid var(--border)',
           padding: '0 20px', flexShrink: 0, height: '36px',
         }}>
-          {['chart', 'overview'].map(tab => (
+          {['chart', 'overview', 'financials'].map(tab => (
             <button
               key={tab}
-              onClick={() => setMainTab(tab)}
+              onClick={() => handleTabChange(tab)}
               style={{
                 height: '36px', padding: '0 14px',
                 background: 'none', border: 'none',
@@ -579,6 +608,7 @@ export default function App() {
         </div>
 
         {mainTab === 'overview' && <OverviewPanel info={info} />}
+        {mainTab === 'financials' && <FinancialsPanel data={financialsData} loading={financialsLoading} symbol={symbol} />}
 
         {mainTab === 'chart' && <>
 
@@ -1122,6 +1152,338 @@ function OverviewPanel({ info }) {
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Financials panel ──────────────────────────────────────────────────────────
+
+// Ordered row definitions: { key, level, expandable? }
+// level 0 = bold parent row, level 1 = indented child row
+// Rows not in the list are appended at the end as level-0 rows.
+const INCOME_ROWS = [
+  { key: 'Total Revenue',                             level: 0 },
+  { key: 'Operating Revenue',                         level: 1 },
+  { key: 'Cost Of Revenue',                           level: 1 },
+  { key: 'Gross Profit',                              level: 0 },
+  { key: 'Operating Expense',                         level: 0 },
+  { key: 'Research And Development',                  level: 1 },
+  { key: 'Research Development',                      level: 1 },
+  { key: 'Selling General And Administrative',        level: 1 },
+  { key: 'Selling General Administrative',            level: 1 },
+  { key: 'Other Operating Expenses',                  level: 1 },
+  { key: 'Total Operating Expenses',                  level: 1 },
+  { key: 'Operating Income',                          level: 0 },
+  { key: 'Operating Income Or Loss',                  level: 0 },
+  { key: 'Net Non Operating Interest Income Expense', level: 0 },
+  { key: 'Interest Income Non Operating',             level: 1 },
+  { key: 'Interest Expense Non Operating',            level: 1 },
+  { key: 'Interest Expense',                          level: 1 },
+  { key: 'Total Other Income Expense Net',            level: 1 },
+  { key: 'Other Income Expense',                      level: 0 },
+  { key: 'Pretax Income',                             level: 0 },
+  { key: 'Income Before Tax',                         level: 0 },
+  { key: 'Tax Provision',                             level: 1 },
+  { key: 'Income Tax Expense',                        level: 1 },
+  { key: 'Net Income Common Stockholders',            level: 0 },
+  { key: 'Net Income',                                level: 1 },
+  { key: 'Net Income From Continuing Ops',            level: 1 },
+  { key: 'Minority Interests',                        level: 1 },
+  { key: 'Net Income Applicable To Common Shares',    level: 1 },
+  { key: 'Basic EPS',                                 level: 0 },
+  { key: 'Basic Average Shares',                      level: 1 },
+  { key: 'Diluted EPS',                               level: 0 },
+  { key: 'Diluted Average Shares',                    level: 1 },
+  { key: 'EBITDA',                                    level: 0 },
+  { key: 'Ebitda',                                    level: 0 },
+]
+
+const BALANCE_ROWS = [
+  { key: 'Total Assets',                                   level: 0 },
+  { key: 'Current Assets',                                 level: 0 },
+  { key: 'Total Current Assets',                           level: 0 },
+  { key: 'Cash And Cash Equivalents',                      level: 1 },
+  { key: 'Cash Cash Equivalents And Short Term Investments', level: 1 },
+  { key: 'Other Short Term Investments',                   level: 1 },
+  { key: 'Net Receivables',                                level: 1 },
+  { key: 'Inventory',                                      level: 1 },
+  { key: 'Other Current Assets',                           level: 1 },
+  { key: 'Total Non Current Assets',                       level: 0 },
+  { key: 'Net PPE',                                        level: 1 },
+  { key: 'Property Plant Equipment',                       level: 1 },
+  { key: 'Goodwill',                                       level: 1 },
+  { key: 'Intangible Assets',                              level: 1 },
+  { key: 'Long Term Investments',                          level: 1 },
+  { key: 'Other Non Current Assets',                       level: 1 },
+  { key: 'Total Liabilities Net Minority Interest',        level: 0 },
+  { key: 'Total Liabilities',                              level: 0 },
+  { key: 'Current Liabilities',                            level: 0 },
+  { key: 'Total Current Liabilities',                      level: 0 },
+  { key: 'Payables And Accrued Expenses',                  level: 1 },
+  { key: 'Accounts Payable',                               level: 1 },
+  { key: 'Current Debt',                                   level: 1 },
+  { key: 'Short Long Term Debt',                           level: 1 },
+  { key: 'Other Current Liabilities',                      level: 1 },
+  { key: 'Total Non Current Liabilities Net Minority Interest', level: 0 },
+  { key: 'Long Term Debt',                                 level: 1 },
+  { key: 'Other Non Current Liabilities',                  level: 1 },
+  { key: 'Stockholders Equity',                            level: 0 },
+  { key: 'Total Equity Gross Minority Interest',           level: 0 },
+  { key: 'Common Stock Equity',                            level: 0 },
+  { key: 'Retained Earnings',                              level: 1 },
+  { key: 'Common Stock',                                   level: 1 },
+  { key: 'Additional Paid In Capital',                     level: 1 },
+  { key: 'Treasury Stock',                                 level: 1 },
+]
+
+const CASHFLOW_ROWS = [
+  { key: 'Operating Cash Flow',                         level: 0 },
+  { key: 'Total Cash From Operating Activities',        level: 0 },
+  { key: 'Net Income From Continuing Operations',       level: 1 },
+  { key: 'Net Income',                                  level: 1 },
+  { key: 'Depreciation Amortization Depletion',         level: 1 },
+  { key: 'Depreciation And Amortization',               level: 1 },
+  { key: 'Deferred Tax',                                level: 1 },
+  { key: 'Stock Based Compensation',                    level: 1 },
+  { key: 'Change In Working Capital',                   level: 1 },
+  { key: 'Change In Receivables',                       level: 2 },
+  { key: 'Change In Inventory',                         level: 2 },
+  { key: 'Change In Payables',                          level: 2 },
+  { key: 'Other Non Cash Items',                        level: 1 },
+  { key: 'Investing Cash Flow',                         level: 0 },
+  { key: 'Total Cash From Investing Activities',        level: 0 },
+  { key: 'Capital Expenditure',                         level: 1 },
+  { key: 'Net PPE Purchase And Sale',                   level: 1 },
+  { key: 'Net Business Purchase And Sale',              level: 1 },
+  { key: 'Net Investment Purchase And Sale',            level: 1 },
+  { key: 'Other Investing Activities',                  level: 1 },
+  { key: 'Financing Cash Flow',                         level: 0 },
+  { key: 'Total Cash From Financing Activities',        level: 0 },
+  { key: 'Net Short Term Debt Issuance',                level: 1 },
+  { key: 'Net Long Term Debt Issuance',                 level: 1 },
+  { key: 'Net Common Stock Issuance',                   level: 1 },
+  { key: 'Cash Dividends Paid',                         level: 1 },
+  { key: 'Other Financing Activities',                  level: 1 },
+  { key: 'End Cash Position',                           level: 0 },
+  { key: 'Free Cash Flow',                              level: 0 },
+]
+
+const STMT_ROW_DEFS = { income: INCOME_ROWS, balance: BALANCE_ROWS, cashflow: CASHFLOW_ROWS }
+
+// Format a raw dollar value into millions with commas, matching Yahoo Finance style
+function fmtM(v) {
+  if (v == null) return '—'
+  const millions = v / 1e6
+  const abs = Math.abs(millions)
+  const formatted = abs.toLocaleString('en-US', { maximumFractionDigits: abs < 10 ? 2 : 0 })
+  return millions < 0 ? `(${formatted})` : formatted
+}
+
+function fmtEPS(v) {
+  if (v == null) return '—'
+  return v < 0 ? `(${Math.abs(v).toFixed(2)})` : v.toFixed(2)
+}
+
+const EPS_ROWS = new Set(['Basic EPS', 'Diluted EPS', 'Basic Eps', 'Diluted Eps'])
+const SHARE_ROWS = new Set(['Basic Average Shares', 'Diluted Average Shares'])
+
+function fmtVal(label, v) {
+  if (EPS_ROWS.has(label)) return fmtEPS(v)
+  if (SHARE_ROWS.has(label)) return v == null ? '—' : (v / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 }) + 'M'
+  return fmtM(v)
+}
+
+function pctChange(curr, prev) {
+  if (curr == null || prev == null || prev === 0) return null
+  return ((curr - prev) / Math.abs(prev)) * 100
+}
+
+function FinancialTable({ table, stmtKey, collapsed, onToggle }) {
+  if (!table || !table.rows.length) {
+    return <div style={{ color: 'var(--text-muted)', fontSize: '13px', padding: '24px 0' }}>No data available</div>
+  }
+
+  const defs = STMT_ROW_DEFS[stmtKey] ?? []
+  const defMap = Object.fromEntries(defs.map(d => [d.key, d]))
+  const defsInData = defs.filter(d => table.rows.some(r => r.label === d.key))
+  const definedKeys = new Set(defs.map(d => d.key))
+  const extraRows = table.rows.filter(r => !definedKeys.has(r.label))
+
+  const rowByLabel = Object.fromEntries(table.rows.map(r => [r.label, r]))
+
+  // Build ordered display rows, skipping rows with no data
+  const ordered = [
+    ...defsInData,
+    ...extraRows.map(r => ({ key: r.label, level: 0 })),
+  ]
+
+  // Determine which level-0 rows are parents (have level-1 children)
+  const parentKeys = new Set()
+  for (let i = 0; i < ordered.length - 1; i++) {
+    if (ordered[i].level === 0 && ordered[i + 1]?.level > 0) parentKeys.add(ordered[i].key)
+  }
+
+  const cols = table.columns
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: '500px' }}>
+        <thead>
+          <tr>
+            <th style={{
+              textAlign: 'left', padding: '6px 0 10px',
+              fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)',
+              borderBottom: '2px solid var(--border)',
+              minWidth: '260px', position: 'sticky', left: 0, background: 'var(--bg-panel)',
+            }}>
+              Breakdown
+            </th>
+            {cols.map(col => (
+              <th key={col} style={{
+                textAlign: 'right', padding: '6px 20px 10px',
+                fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)',
+                borderBottom: '2px solid var(--border)', whiteSpace: 'nowrap',
+              }}>
+                {col.length === 10 ? col.slice(0, 7) : col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {ordered.map(({ key, level }) => {
+            const row = rowByLabel[key]
+            if (!row) return null
+            const isParent = parentKeys.has(key)
+            const isCollapsed = collapsed.has(key)
+            const parentOfThis = ordered.slice(0, ordered.findIndex(o => o.key === key))
+              .reverse().find(o => o.level < level)
+            const hidden = parentOfThis && collapsed.has(parentOfThis.key)
+            if (hidden) return null
+
+            const isLevel0 = level === 0
+            return (
+              <tr
+                key={key}
+                style={{ borderBottom: '1px solid var(--border)', cursor: isParent ? 'pointer' : 'default' }}
+                onClick={isParent ? () => onToggle(key) : undefined}
+              >
+                <td style={{
+                  padding: '9px 0 9px ' + (level * 20) + 'px',
+                  fontSize: '12px',
+                  fontWeight: isLevel0 ? 600 : 400,
+                  color: isLevel0 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  position: 'sticky', left: 0, background: 'var(--bg-panel)',
+                }}>
+                  {isParent && (
+                    <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginRight: '6px' }}>
+                      {isCollapsed ? '▶' : '▼'}
+                    </span>
+                  )}
+                  {key}
+                </td>
+                {row.values.map((v, j) => {
+                  const chg = (isLevel0 && j === 0 && cols[0]?.startsWith('TTM') && j < row.values.length - 1)
+                    ? null
+                    : (isLevel0 && j < row.values.length - 1 ? pctChange(v, row.values[j + 1]) : null)
+                  const isNeg = v != null && v < 0
+                  return (
+                    <td key={j} style={{ textAlign: 'right', padding: '9px 20px', verticalAlign: 'top' }}>
+                      <div style={{
+                        fontSize: '12px', fontFamily: 'var(--font-mono)',
+                        fontWeight: isLevel0 ? 600 : 400,
+                        color: v == null ? 'var(--text-muted)' : isNeg ? 'var(--red)' : 'var(--text-primary)',
+                      }}>
+                        {fmtVal(key, v)}
+                      </div>
+                      {chg != null && (
+                        <div style={{ fontSize: '10px', color: chg >= 0 ? 'var(--green)' : 'var(--red)', marginTop: '2px' }}>
+                          {chg >= 0 ? '▲' : '▼'} {Math.abs(chg).toFixed(1)}%
+                        </div>
+                      )}
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '12px' }}>
+        All figures in USD Millions except per-share data
+      </div>
+    </div>
+  )
+}
+
+function FinancialsPanel({ data, loading, symbol }) {
+  const [subTab,   setSubTab]   = useState('income')
+  const [period,   setPeriod]   = useState('annual')
+  const [collapsed, setCollapsed] = useState(new Set())
+
+  const onToggle = (key) => setCollapsed(prev => {
+    const next = new Set(prev)
+    next.has(key) ? next.delete(key) : next.add(key)
+    return next
+  })
+
+  if (!symbol) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      Search for a symbol to see financials
+    </div>
+  )
+  if (loading) return (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      Loading financials…
+    </div>
+  )
+
+  const SUBTABS = [
+    { key: 'income',   label: 'Income Statement' },
+    { key: 'balance',  label: 'Balance Sheet' },
+    { key: 'cashflow', label: 'Cash Flow Statement' },
+  ]
+  const table = data?.[subTab]?.[period]
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 28px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-panel)', flexShrink: 0, height: '40px',
+      }}>
+        <div style={{ display: 'flex' }}>
+          {SUBTABS.map(({ key, label }) => (
+            <button key={key} onClick={() => { setSubTab(key); setCollapsed(new Set()) }}
+              style={{
+                height: '40px', padding: '0 16px',
+                background: 'none', border: 'none',
+                borderBottom: subTab === key ? '2px solid var(--blue)' : '2px solid transparent',
+                color: subTab === key ? 'var(--text-primary)' : 'var(--text-muted)',
+                fontSize: '12px', fontWeight: subTab === key ? 600 : 400, cursor: 'pointer',
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {['annual', 'quarterly'].map(p => (
+            <button key={p} onClick={() => setPeriod(p)}
+              style={{
+                height: '26px', padding: '0 12px',
+                border: '1px solid var(--border)', borderRadius: '4px',
+                background: period === p ? 'var(--blue)' : 'transparent',
+                color: period === p ? '#fff' : 'var(--text-muted)',
+                fontSize: '11px', fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize',
+              }}>
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 28px' }}>
+        <FinancialTable table={table} stmtKey={subTab} collapsed={collapsed} onToggle={onToggle} />
+      </div>
     </div>
   )
 }

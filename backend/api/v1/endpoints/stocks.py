@@ -377,3 +377,118 @@ async def get_screen(symbol: str):
         },
         "report": result.report,
     }
+
+
+@router.get("/{symbol}/financials")
+async def get_financials(symbol: str):
+    sym  = symbol.upper()
+    loop = asyncio.get_event_loop()
+
+    def _fetch():
+        import pandas as pd
+
+        def _get(t, *attrs):
+            for a in attrs:
+                try:
+                    df = getattr(t, a, None)
+                    if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
+                        return df
+                except Exception:
+                    pass
+            return pd.DataFrame()
+
+        t = yf.Ticker(sym)
+        return {
+            "income_annual":      _get(t, "income_stmt",            "financials"),
+            "income_quarterly":   _get(t, "quarterly_income_stmt",  "quarterly_financials"),
+            "balance_annual":     _get(t, "balance_sheet"),
+            "balance_quarterly":  _get(t, "quarterly_balance_sheet"),
+            "cashflow_annual":    _get(t, "cash_flow",              "cashflow"),
+            "cashflow_quarterly": _get(t, "quarterly_cash_flow",    "quarterly_cashflow"),
+        }
+
+    try:
+        data = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch),
+            timeout=20.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail=f"Timed out fetching financials for '{sym}'")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch financials for '{sym}': {exc}")
+
+    import math
+
+    def _safe_float(v):
+        try:
+            f = float(v)
+            return None if math.isnan(f) or math.isinf(f) else f
+        except (TypeError, ValueError):
+            return None
+
+    def _col_label(c):
+        return str(c.date()) if hasattr(c, "date") else str(c)
+
+    def _df_to_rows(df):
+        if df is None or df.empty:
+            return {}
+        return {str(label): [_safe_float(v) for v in series]
+                for label, series in df.iterrows()}
+
+    def _ttm(quarterly_df):
+        """Sum last 4 quarters per row (for flow statements)."""
+        if quarterly_df is None or quarterly_df.empty:
+            return None, None
+        n = min(4, quarterly_df.shape[1])
+        result = {}
+        for label, series in quarterly_df.iterrows():
+            vals = [_safe_float(v) for v in series.iloc[:n]]
+            non_null = [v for v in vals if v is not None]
+            result[str(label)] = sum(non_null) if non_null else None
+        # also return date of most recent quarter for TTM label
+        ttm_label = f"TTM ({_col_label(quarterly_df.columns[0])})"
+        return result, ttm_label
+
+    def _build(annual_df, quarterly_df, include_ttm=True):
+        ann_cols = [_col_label(c) for c in annual_df.columns] if annual_df is not None and not annual_df.empty else []
+        ann_rows = _df_to_rows(annual_df)
+        qtr_cols = [_col_label(c) for c in quarterly_df.columns] if quarterly_df is not None and not quarterly_df.empty else []
+        qtr_rows = _df_to_rows(quarterly_df)
+
+        if include_ttm:
+            ttm_vals, ttm_label = _ttm(quarterly_df)
+        else:
+            ttm_vals, ttm_label = None, None
+
+        # Merge all known row labels (preserve annual order, append any quarterly-only labels)
+        all_labels = list(ann_rows.keys())
+        for lbl in qtr_rows:
+            if lbl not in ann_rows:
+                all_labels.append(lbl)
+
+        def _make_rows(row_dict, cols):
+            return [{"label": lbl, "values": row_dict.get(lbl, [None] * len(cols))}
+                    for lbl in all_labels]
+
+        # Annual: prepend TTM column
+        ann_final_cols = ([ttm_label] + ann_cols) if ttm_label else ann_cols
+        ann_final_rows = []
+        for lbl in all_labels:
+            ttm_val = ttm_vals.get(lbl) if ttm_vals else None
+            ann_vals = ann_rows.get(lbl, [None] * len(ann_cols))
+            ann_final_rows.append({
+                "label": lbl,
+                "values": ([ttm_val] + ann_vals) if ttm_label else ann_vals,
+            })
+
+        return {
+            "annual":    {"columns": ann_final_cols, "rows": ann_final_rows},
+            "quarterly": {"columns": qtr_cols,       "rows": _make_rows(qtr_rows, qtr_cols)},
+        }
+
+    return {
+        "symbol":   sym,
+        "income":   _build(data["income_annual"],   data["income_quarterly"],   include_ttm=True),
+        "balance":  _build(data["balance_annual"],  data["balance_quarterly"],  include_ttm=False),
+        "cashflow": _build(data["cashflow_annual"],  data["cashflow_quarterly"], include_ttm=True),
+    }
