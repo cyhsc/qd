@@ -345,12 +345,20 @@ async def get_info(symbol: str):
 
 
 @router.get("/{symbol}/screen")
-async def get_screen(symbol: str):
+async def get_screen(
+    symbol: str,
+    sqz_pos_bars_threshold: int = Query(default=3),
+    sqz_pos_bars_op: str        = Query(default="gt"),
+):
     sym  = symbol.upper()
     loop = asyncio.get_event_loop()
     try:
         result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: screen_individual(sym)),
+            loop.run_in_executor(None, lambda: screen_individual(
+                sym,
+                sqz_pos_bars_threshold=sqz_pos_bars_threshold,
+                sqz_pos_bars_op=sqz_pos_bars_op,
+            )),
             timeout=60.0,
         )
     except asyncio.TimeoutError:
@@ -392,8 +400,9 @@ async def get_screen(symbol: str):
             "fast_width_above_slow_width": result.rwb.fast_width_above_slow_width,
         },
         "sqz": {
-            "momentum":      fmt_line(result.sqz.momentum),
-            "squeeze_state": result.sqz.squeeze_state.value,
+            "momentum":                  fmt_line(result.sqz.momentum),
+            "squeeze_state":             result.sqz.squeeze_state.value,
+            "consecutive_positive_bars": result.sqz.consecutive_positive_bars,
         },
         "report": result.report,
     }

@@ -9,6 +9,14 @@ const RANGES = ['1D', '5D', '1M', '3M', '6M', '1Y', '2Y', '3Y', '5Y', '10Y', 'MA
 
 const INTRADAY_INTERVALS = ['1m', '5m', '15m', '30m', '1h']
 const DAILY_INTERVALS    = ['D', 'W', 'M']
+
+// Default display range when switching to an interval
+const INTERVAL_DEFAULT_RANGE = {
+  '1m': '1M', '5m': '1M', '15m': '1M', '30m': '1M', '1h': '1M',
+  'D':  '1Y',
+  'W':  '3Y',
+  'M':  '10Y',
+}
 const INTERVAL_LABELS    = { D: 'Day', W: 'Week', M: 'Month' }
 
 const INTRADAY_MAX_DAYS = {
@@ -100,6 +108,9 @@ export default function App() {
   const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
   const [verdictRules,  setVerdictRules]  = useState(() => lsJson('qd_verdict_rules',  {}))
+  const [conditionParams, setConditionParams] = useState(() => lsJson('qd_condition_params', {
+    sqz_consecutive_positive_bars: { threshold: 3, op: 'gt' },
+  }))
 
   // Pre-calculated indicator data from backend
   const [maData,      setMaData]      = useState({})
@@ -163,7 +174,8 @@ export default function App() {
     rwbConfigs,
     squeezeConfigs,
     verdictRules,
-  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules])
+    conditionParams,
+  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules, conditionParams])
 
   // Save preferences to backend (fire-and-forget)
   const savePrefs = useCallback((data) => {
@@ -197,7 +209,8 @@ export default function App() {
           if (data.rwbConfigs)     setRwbConfigs(data.rwbConfigs)
           if (data.squeezeConfigs) setSqueezeConfigs(data.squeezeConfigs)
           if (data.activeListId != null) setActiveListId(data.activeListId)
-          if (data.verdictRules)   setVerdictRules(data.verdictRules)
+          if (data.verdictRules)     setVerdictRules(data.verdictRules)
+          if (data.conditionParams) setConditionParams(data.conditionParams)
         } else {
           // First time — seed backend with current localStorage values
           savePrefs({
@@ -219,7 +232,7 @@ export default function App() {
   useEffect(() => {
     if (!prefsLoaded.current) return
     scheduleSave(prefsSnapshot())
-  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules, conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   useEffect(() => {
@@ -366,7 +379,14 @@ export default function App() {
     })
   }, [])
 
-  const handleAnalysis = async () => {
+  const handleConditionParam = useCallback((conditionName, key, value) => {
+    setConditionParams(prev => ({
+      ...prev,
+      [conditionName]: { ...prev[conditionName], [key]: value },
+    }))
+  }, [])
+
+  const handleAnalysis = useCallback(async () => {
     const sym = symbol || input.trim().toUpperCase()
     if (!sym) return
     setAnalysisOpen(true)
@@ -374,7 +394,12 @@ export default function App() {
     setAnalysisError(null)
     setAnalysisLoading(true)
     try {
-      const res = await fetch(`/api/stocks/${sym}/screen`)
+      const sqzP = conditionParams.sqz_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
+      const qs   = new URLSearchParams({
+        sqz_pos_bars_threshold: sqzP.threshold,
+        sqz_pos_bars_op:        sqzP.op,
+      })
+      const res = await fetch(`/api/stocks/${sym}/screen?${qs}`)
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.detail ?? `HTTP ${res.status}`)
@@ -385,7 +410,16 @@ export default function App() {
     } finally {
       setAnalysisLoading(false)
     }
-  }
+  }, [symbol, input, conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-run analysis when condition params change while the modal is open
+  const analysisOpenRef = useRef(false)
+  analysisOpenRef.current = analysisOpen
+  useEffect(() => {
+    if (!analysisOpenRef.current) return
+    const t = setTimeout(() => handleAnalysis(), 400)
+    return () => clearTimeout(t)
+  }, [conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Range only zooms — no re-fetch
   const handleRange = (rng) => {
@@ -397,7 +431,7 @@ export default function App() {
   // Interval change requires new data (different bar size = different max period)
   const handleInterval = (ivl) => {
     const next       = ivl === interval ? null : ivl
-    const nextRange  = next ? bestRange(range, next) : range
+    const nextRange  = next ? (INTERVAL_DEFAULT_RANGE[next] ?? bestRange(range, next)) : range
     setInterval(next)
     if (nextRange !== range) setRange(nextRange)
     if (symbol) fetchStock(symbol, next)
@@ -764,6 +798,8 @@ export default function App() {
           data={analysisData}
           verdictRules={verdictRules}
           onToggleRule={handleToggleRule}
+          conditionParams={conditionParams}
+          onConditionParam={handleConditionParam}
           onClose={() => setAnalysisOpen(false)}
         />
       )}
@@ -788,7 +824,7 @@ function SignSlope({ sign, slope, value }) {
   )
 }
 
-function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, onClose }) {
+function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, conditionParams, onConditionParam, onClose }) {
   // Compute effective role for each condition: user override takes precedence over backend default
   const effectiveRole = (c) => {
     const r = verdictRules?.[c.name]
@@ -909,15 +945,21 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, onClo
               {/* SQZ */}
               <SectionHeader label="Squeeze Momentum" />
               <AnalysisTable rows={[['Momentum', data.sqz.momentum]]} />
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px' }}>
-                Squeeze state: {' '}
-                <span style={{
-                  fontWeight: 600,
-                  color: data.sqz.squeeze_state === 'off' ? 'var(--green)'
-                       : data.sqz.squeeze_state === 'on'  ? 'var(--red)'
-                       : 'var(--text-secondary)',
-                }}>
-                  {data.sqz.squeeze_state.toUpperCase()}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px', display: 'flex', gap: '16px' }}>
+                <span>Squeeze state: {' '}
+                  <span style={{
+                    fontWeight: 600,
+                    color: data.sqz.squeeze_state === 'off' ? 'var(--green)'
+                         : data.sqz.squeeze_state === 'on'  ? 'var(--red)'
+                         : 'var(--text-secondary)',
+                  }}>
+                    {data.sqz.squeeze_state.toUpperCase()}
+                  </span>
+                </span>
+                <span>Consecutive positive bars: {' '}
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {data.sqz.consecutive_positive_bars}
+                  </span>
                 </span>
               </div>
 
@@ -972,6 +1014,38 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, onClo
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                           {c.description}
                         </span>
+                        {c.name === 'sqz_consecutive_positive_bars' && (() => {
+                          const p = conditionParams?.sqz_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Consecutive bars</span>
+                              <select
+                                value={p.op}
+                                onChange={e => onConditionParam('sqz_consecutive_positive_bars', 'op', e.target.value)}
+                                style={{
+                                  height: '22px', padding: '0 4px', fontSize: '11px',
+                                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                                  borderRadius: '3px', color: 'var(--text-primary)', cursor: 'pointer',
+                                }}
+                              >
+                                <option value="gt">greater than</option>
+                                <option value="eq">equal to</option>
+                                <option value="lt">less than</option>
+                              </select>
+                              <input
+                                type="number"
+                                min="1"
+                                value={p.threshold}
+                                onChange={e => onConditionParam('sqz_consecutive_positive_bars', 'threshold', Math.max(1, parseInt(e.target.value) || 1))}
+                                style={{
+                                  width: '48px', height: '22px', padding: '0 4px', fontSize: '11px',
+                                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                                  borderRadius: '3px', color: 'var(--text-primary)', textAlign: 'center',
+                                }}
+                              />
+                            </div>
+                          )
+                        })()}
                       </div>
                     </div>
                   )

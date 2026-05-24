@@ -69,8 +69,9 @@ class RWBAnalysis:
 @dataclass
 class SQZAnalysis:
     """Full SQZ (Squeeze Momentum) analysis result."""
-    momentum:      LineAnalysis
-    squeeze_state: SqueezeState
+    momentum:                  LineAnalysis
+    squeeze_state:             SqueezeState
+    consecutive_positive_bars: int   # bars since momentum last turned positive (0 if currently non-positive)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +189,19 @@ def analyze_sqz(
     last_sqz_color = data["sqz"][-1]["color"] if data["sqz"] else '#26a69a'
     state = _SQZ_COLOR_TO_STATE.get(last_sqz_color, SqueezeState.NONE)
 
+    # Count consecutive positive momentum bars from the most recent bar backwards.
+    # Returns 0 if the current bar is not positive.
+    mom_values = [pt["value"] for pt in data["mom"]]
+    consecutive_positive = 0
+    if mom_values and float(mom_values[-1]) > 0:
+        for v in reversed(mom_values):
+            if float(v) > 0:
+                consecutive_positive += 1
+            else:
+                break
+
     return SQZAnalysis(
         momentum=_analyze_series(data["mom"], flat_threshold),
         squeeze_state=state,
+        consecutive_positive_bars=consecutive_positive,
     )

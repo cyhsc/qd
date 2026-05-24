@@ -85,6 +85,11 @@ _CONDITIONS: dict[str, dict] = {
         "description": "SQZ not ON — squeeze has fired or is not active (energy releasing or neutral)",
         "fn": lambda m, r, s: s.squeeze_state != SqueezeState.ON,
     },
+    "sqz_consecutive_positive_bars": {
+        "description": "SQZ consecutive positive bars — number of bars since momentum last turned positive",
+        # Default fn is a placeholder; screen_individual() replaces it based on user config.
+        "fn": lambda m, r, s: True,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -184,7 +189,11 @@ def _build_report(result: ScreenResult) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
-def screen_individual(symbol: str) -> ScreenResult:
+def screen_individual(
+    symbol: str,
+    sqz_pos_bars_threshold: int = 3,
+    sqz_pos_bars_op: str = "gt",   # "gt" | "eq" | "lt"
+) -> ScreenResult:
     """
     Screen a single stock symbol against momentum/trend conditions.
 
@@ -223,6 +232,24 @@ def screen_individual(symbol: str) -> ScreenResult:
     macd_result = analyze_macd(closes)
     rwb_result  = analyze_rwb(closes)
     sqz_result  = analyze_sqz(closes, highs, lows)
+
+    # ── Build dynamic condition descriptions ─────────────────────────────
+    _op_symbol = {"gt": ">", "eq": "=", "lt": "<"}
+    _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "less than"}
+    op_sym = _op_symbol.get(sqz_pos_bars_op, ">")
+    op_lbl = _op_label.get(sqz_pos_bars_op, "greater than")
+    _CONDITIONS["sqz_consecutive_positive_bars"]["description"] = (
+        f"SQZ consecutive positive bars {op_sym} {sqz_pos_bars_threshold} — "
+        f"bars since momentum last turned positive is {op_lbl} {sqz_pos_bars_threshold}"
+    )
+
+    def _sqz_pos_bars_fn(m, r, s):
+        n = s.consecutive_positive_bars
+        if sqz_pos_bars_op == "gt": return n > sqz_pos_bars_threshold
+        if sqz_pos_bars_op == "eq": return n == sqz_pos_bars_threshold
+        if sqz_pos_bars_op == "lt": return n < sqz_pos_bars_threshold
+        return False
+    _CONDITIONS["sqz_consecutive_positive_bars"]["fn"] = _sqz_pos_bars_fn
 
     # ── Evaluate every condition ──────────────────────────────────────────
     conditions: list[ConditionResult] = []
