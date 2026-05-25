@@ -192,13 +192,18 @@ export default function App() {
     saveTimer.current = setTimeout(() => savePrefs(data), 800)
   }, [savePrefs])
 
-  // Holds indicator configs found in old preferences (pre-chart-config migration)
-  const legacyIndicatorsRef = useRef(null)
+  // Snapshot of whatever was in localStorage at startup — used to migrate old indicator
+  // settings into the chart config system on first load if the backend config is empty.
+  const initialIndicatorsRef = useRef({
+    maConfigs:      lsJson('qd_ma_configs',     []),
+    macdConfigs:    lsJson('qd_macd_configs',   []),
+    guppyConfigs:   lsJson('qd_guppy_configs',  []),
+    rwbConfigs:     lsJson('qd_rwb_configs',    []),
+    squeezeConfigs: lsJson('qd_squeeze_configs',[]),
+  })
 
-  // Load preferences from backend on mount.
-  // If backend has no preferences yet, seed it with the current localStorage values.
-  // Chart configs are loaded sequentially after preferences so the legacy migration
-  // (indicator data stored in old preferences → new chart config) is race-free.
+  // Load preferences from backend on mount, then load chart configs.
+  // Sequenced (not parallel) so the migration logic below has preferences available.
   const prefsLoaded = useRef(false)
   const chartConfigsLoaded = useRef(false)
   useEffect(() => {
@@ -214,25 +219,12 @@ export default function App() {
             setActiveChartConfigId(data.activeChartConfigId)
             savedActiveChartConfigId = data.activeChartConfigId
           }
-          // Capture legacy indicator configs for migration into the chart config system
-          const hasLegacy = data.maConfigs || data.macdConfigs || data.guppyConfigs ||
-                            data.rwbConfigs || data.squeezeConfigs
-          if (hasLegacy) {
-            legacyIndicatorsRef.current = {
-              maConfigs:      data.maConfigs      ?? [],
-              macdConfigs:    data.macdConfigs    ?? [],
-              guppyConfigs:   data.guppyConfigs   ?? [],
-              rwbConfigs:     data.rwbConfigs     ?? [],
-              squeezeConfigs: data.squeezeConfigs ?? [],
-            }
-          }
         } else {
           // First time — seed backend with current state
           savePrefs({ theme, activeListId, activeChartConfigId: null })
         }
         prefsLoaded.current = true
       })
-      // Load chart configs after prefs so legacyIndicatorsRef is already populated
       .then(() => fetch('/api/chart-configs'))
       .then(r => r.json())
       .then(configs => {
@@ -242,24 +234,26 @@ export default function App() {
         const saved = configs.find(c => c.id === savedActiveChartConfigId) ?? configs[0]
         setActiveChartConfigId(saved.id)
 
-        // Migrate: if the config's indicators are all empty and legacy data exists, use it
+        // If the saved config has no indicators, migrate from the localStorage snapshot
         const ind = saved.indicators ?? {}
         const isEmpty = !ind.maConfigs?.length && !ind.macdConfigs?.length &&
                         !ind.guppyConfigs?.length && !ind.rwbConfigs?.length &&
                         !ind.squeezeConfigs?.length
-        const legacy = legacyIndicatorsRef.current
-        if (isEmpty && legacy) {
-          applyChartConfig(legacy)
+        const initial = initialIndicatorsRef.current
+        const hasInitial = initial.maConfigs?.length || initial.macdConfigs?.length ||
+                           initial.guppyConfigs?.length || initial.rwbConfigs?.length ||
+                           initial.squeezeConfigs?.length
+        if (isEmpty && hasInitial) {
+          applyChartConfig(initial)
           // Persist the migrated indicators into this chart config
           fetch(`/api/chart-configs/${saved.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: saved.name, indicators: legacy }),
+            body: JSON.stringify({ name: saved.name, indicators: initial }),
           }).catch(() => {})
           setChartConfigs(prev => prev.map(c =>
-            c.id !== saved.id ? c : { ...c, indicators: legacy }
+            c.id !== saved.id ? c : { ...c, indicators: initial }
           ))
-          legacyIndicatorsRef.current = null  // only migrate once
         } else {
           applyChartConfig(saved.indicators)
         }
