@@ -77,6 +77,11 @@ _CONDITIONS: dict[str, dict] = {
         "description": "MACD signal line positive — smoothed trend is bullish",
         "fn": lambda m, r, s: m.signal.sign == Sign.POSITIVE,
     },
+    "macd_histogram_consecutive_positive_bars": {
+        "description": "MACD histogram consecutive positive bars — number of bars since histogram last turned positive",
+        # Default fn is a placeholder; screen_individual() replaces it based on user config.
+        "fn": lambda m, r, s: True,
+    },
     # ── SQZ ──────────────────────────────────────────────────────────────────
     "sqz_momentum_positive": {
         "description": "SQZ momentum positive — squeeze momentum is in bullish territory",
@@ -92,11 +97,6 @@ _CONDITIONS: dict[str, dict] = {
     },
     "sqz_consecutive_positive_bars": {
         "description": "SQZ consecutive positive bars — number of bars since momentum last turned positive",
-        # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
-    },
-    "macd_histogram_consecutive_positive_bars": {
-        "description": "MACD histogram consecutive positive bars — number of bars since histogram last turned positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
         "fn": lambda m, r, s: True,
     },
