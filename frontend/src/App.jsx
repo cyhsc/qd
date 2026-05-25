@@ -204,6 +204,7 @@ export default function App() {
     guppyConfigs:   lsJson('qd_guppy_configs',  []),
     rwbConfigs:     lsJson('qd_rwb_configs',    []),
     squeezeConfigs: lsJson('qd_squeeze_configs',[]),
+    chartType:      lsJson('qd_chart_type',     'candlestick'),
   })
 
   // Load preferences from backend on mount, then load chart configs.
@@ -301,7 +302,7 @@ export default function App() {
       .catch(() => {})
   }, [])
 
-  // Helper: push a config's indicators into the live indicator states
+  // Helper: push a config's indicators (including chartType) into live state
   function applyChartConfig(indicators) {
     if (!indicators) return
     setMaConfigs(     indicators.maConfigs      ?? [])
@@ -309,6 +310,7 @@ export default function App() {
     setGuppyConfigs(  indicators.guppyConfigs   ?? [])
     setRwbConfigs(    indicators.rwbConfigs     ?? [])
     setSqueezeConfigs(indicators.squeezeConfigs ?? [])
+    setChartType(     indicators.chartType      ?? 'candlestick')
   }
 
   // Debounce-save indicator changes to the active chart config
@@ -414,17 +416,17 @@ export default function App() {
   const activeChartConfigIdRef = useRef(activeChartConfigId)
   activeChartConfigIdRef.current = activeChartConfigId
 
-  // Debounce-save all indicator state to the active chart config on any change.
+  // Debounce-save all indicator state (including chartType) to the active chart config.
   // Skip the initial mount (chartConfigsLoaded guards against premature saves).
   useEffect(() => {
     if (!chartConfigsLoaded.current) return
     const id = activeChartConfigIdRef.current
     if (id == null) return
-    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs }
+    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType }
     // Mirror into local state so switching configs sees the latest values
     setChartConfigs(prev => prev.map(c => c.id !== id ? c : { ...c, indicators }))
     saveChartConfig(id, indicators)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch to a different chart config — apply its indicators immediately
   const handleChartConfigChange = useCallback((id) => {
@@ -437,7 +439,7 @@ export default function App() {
   // Create a new chart config, seeded from the current indicator state
   const handleCreateChartConfig = useCallback(async (name) => {
     const indicators = {
-      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs,
+      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType,
     }
     const res = await fetch('/api/chart-configs', {
       method: 'POST',
@@ -448,7 +450,7 @@ export default function App() {
     const created = await res.json()
     setChartConfigs(prev => [...prev, created])
     setActiveChartConfigId(created.id)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType])
 
   // Delete a chart config (must keep at least one)
   const handleDeleteChartConfig = useCallback(async (id) => {

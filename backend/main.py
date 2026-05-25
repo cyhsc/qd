@@ -50,6 +50,7 @@ async def lifespan(app: FastAPI):
             db.add(ChartConfig(
                 name="Default",
                 indicators={
+                    "chartType":      "candlestick",
                     "maConfigs":      [],
                     "macdConfigs":    [],
                     "guppyConfigs":   [],
