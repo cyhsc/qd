@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 
 from api.v1 import router as v1_router
-from db import Base, ScreenConfig, SessionLocal, Watchlist, engine
+from db import Base, ChartConfig, ScreenConfig, SessionLocal, Watchlist, engine
 
 logging.basicConfig(level=logging.INFO)
 
@@ -39,6 +39,22 @@ async def lifespan(app: FastAPI):
                     "sqz_consecutive_positive_bars":             {"verdict_role": None, "threshold": 3, "op": "gt"},
                     "macd_histogram_consecutive_positive_bars":  {"verdict_role": None, "threshold": 3, "op": "gt"},
                     "rwb_bars_since_fast_above_slow":            {"verdict_role": None, "threshold": 3, "op": "gt"},
+                },
+            ))
+            await db.commit()
+
+    # Seed the default "Default" chart config if none exist
+    async with SessionLocal() as db:
+        count = (await db.execute(select(func.count()).select_from(ChartConfig))).scalar()
+        if count == 0:
+            db.add(ChartConfig(
+                name="Default",
+                indicators={
+                    "maConfigs":      [],
+                    "macdConfigs":    [],
+                    "guppyConfigs":   [],
+                    "rwbConfigs":     [],
+                    "squeezeConfigs": [],
                 },
             ))
             await db.commit()

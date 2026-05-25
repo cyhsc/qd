@@ -112,6 +112,10 @@ export default function App() {
   const [screenConfigs,  setScreenConfigs]  = useState([])
   const [activeConfigId, setActiveConfigId] = useState(null)
 
+  // Chart configs — list of { id, name, indicators } objects, persisted on backend
+  const [chartConfigs,       setChartConfigs]       = useState([])
+  const [activeChartConfigId, setActiveChartConfigId] = useState(null)
+
   // Pre-calculated indicator data from backend
   const [maData,      setMaData]      = useState({})
   const [guppyData,   setGuppyData]   = useState(null)
@@ -169,12 +173,8 @@ export default function App() {
   const prefsSnapshot = useCallback(() => ({
     theme,
     activeListId,
-    maConfigs,
-    macdConfigs,
-    guppyConfigs,
-    rwbConfigs,
-    squeezeConfigs,
-  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
+    activeChartConfigId,
+  }), [theme, activeListId, activeChartConfigId])
 
   // Save preferences to backend (fire-and-forget)
   const savePrefs = useCallback((data) => {
@@ -202,23 +202,11 @@ export default function App() {
         if (data && Object.keys(data).length > 0) {
           // Apply saved preferences
           if (data.theme)          { setTheme(data.theme); document.documentElement.dataset.theme = data.theme }
-          if (data.maConfigs)      setMaConfigs(data.maConfigs)
-          if (data.macdConfigs)    setMacdConfigs(data.macdConfigs)
-          if (data.guppyConfigs)   setGuppyConfigs(data.guppyConfigs)
-          if (data.rwbConfigs)     setRwbConfigs(data.rwbConfigs)
-          if (data.squeezeConfigs) setSqueezeConfigs(data.squeezeConfigs)
           if (data.activeListId != null) setActiveListId(data.activeListId)
+          if (data.activeChartConfigId != null) setActiveChartConfigId(data.activeChartConfigId)
         } else {
-          // First time — seed backend with current localStorage values
-          savePrefs({
-            theme,
-            activeListId,
-            maConfigs,
-            macdConfigs,
-            guppyConfigs,
-            rwbConfigs,
-            squeezeConfigs,
-          })
+          // First time — seed backend with current state
+          savePrefs({ theme, activeListId, activeChartConfigId: null })
         }
         prefsLoaded.current = true
       })
@@ -229,7 +217,7 @@ export default function App() {
   useEffect(() => {
     if (!prefsLoaded.current) return
     scheduleSave(prefsSnapshot())
-  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [theme, activeListId, activeChartConfigId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   useEffect(() => {
@@ -255,6 +243,48 @@ export default function App() {
       })
       .catch(() => {})
   }, [])
+
+  // Load chart configs from backend on mount; apply the saved active config's indicators
+  const chartConfigsLoaded = useRef(false)
+  useEffect(() => {
+    fetch('/api/chart-configs')
+      .then(r => r.json())
+      .then(configs => {
+        setChartConfigs(configs)
+        if (configs.length === 0) return
+        // Restore the previously active config (or fall back to first)
+        const saved  = configs.find(c => c.id === activeChartConfigId) ?? configs[0]
+        setActiveChartConfigId(saved.id)
+        applyChartConfig(saved.indicators)
+        chartConfigsLoaded.current = true
+      })
+      .catch(() => { chartConfigsLoaded.current = true })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Helper: push a config's indicators into the live indicator states
+  function applyChartConfig(indicators) {
+    if (!indicators) return
+    setMaConfigs(     indicators.maConfigs      ?? [])
+    setMacdConfigs(   indicators.macdConfigs    ?? [])
+    setGuppyConfigs(  indicators.guppyConfigs   ?? [])
+    setRwbConfigs(    indicators.rwbConfigs     ?? [])
+    setSqueezeConfigs(indicators.squeezeConfigs ?? [])
+  }
+
+  // Debounce-save indicator changes to the active chart config
+  const chartSaveTimer = useRef(null)
+  const saveChartConfig = useCallback((id, indicators) => {
+    clearTimeout(chartSaveTimer.current)
+    chartSaveTimer.current = setTimeout(() => {
+      const cfg = chartConfigs.find(c => c.id === id)
+      if (!cfg) return
+      fetch(`/api/chart-configs/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: cfg.name, indicators }),
+      }).catch(() => {})
+    }, 800)
+  }, [chartConfigs])
 
   // ── Fetch chart data ──────────────────────────────────────────────────────
 
@@ -340,6 +370,59 @@ export default function App() {
     setInput('')
     symbolInputRef.current?.blur()
   }
+
+  const activeChartConfigIdRef = useRef(activeChartConfigId)
+  activeChartConfigIdRef.current = activeChartConfigId
+
+  // Debounce-save all indicator state to the active chart config on any change.
+  // Skip the initial mount (chartConfigsLoaded guards against premature saves).
+  useEffect(() => {
+    if (!chartConfigsLoaded.current) return
+    const id = activeChartConfigIdRef.current
+    if (id == null) return
+    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs }
+    // Mirror into local state so switching configs sees the latest values
+    setChartConfigs(prev => prev.map(c => c.id !== id ? c : { ...c, indicators }))
+    saveChartConfig(id, indicators)
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Switch to a different chart config — apply its indicators immediately
+  const handleChartConfigChange = useCallback((id) => {
+    const cfg = chartConfigs.find(c => c.id === id)
+    if (!cfg) return
+    setActiveChartConfigId(id)
+    applyChartConfig(cfg.indicators)
+  }, [chartConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Create a new chart config, seeded from the current indicator state
+  const handleCreateChartConfig = useCallback(async (name) => {
+    const indicators = {
+      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs,
+    }
+    const res = await fetch('/api/chart-configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, indicators }),
+    })
+    if (!res.ok) return
+    const created = await res.json()
+    setChartConfigs(prev => [...prev, created])
+    setActiveChartConfigId(created.id)
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
+
+  // Delete a chart config (must keep at least one)
+  const handleDeleteChartConfig = useCallback(async (id) => {
+    if (chartConfigs.length <= 1) return
+    await fetch(`/api/chart-configs/${id}`, { method: 'DELETE' }).catch(() => {})
+    setChartConfigs(prev => {
+      const next = prev.filter(c => c.id !== id)
+      if (activeChartConfigIdRef.current === id) {
+        setActiveChartConfigId(next[0]?.id ?? null)
+        applyChartConfig(next[0]?.indicators)
+      }
+      return next
+    })
+  }, [chartConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchFinancials = useCallback(async (sym) => {
     if (financialsSymbol === sym) return // already loaded
@@ -752,6 +835,15 @@ export default function App() {
                 />
               )
             })}
+            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+            {/* Chart config selector */}
+            <ChartConfigSelector
+              configs={chartConfigs}
+              activeId={activeChartConfigId}
+              onSelect={handleChartConfigChange}
+              onCreate={handleCreateChartConfig}
+              onDelete={handleDeleteChartConfig}
+            />
             <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
             <button
               type="button"
@@ -1183,6 +1275,87 @@ function AnalysisTable({ rows }) {
           <SignSlope sign={la.sign} slope={la.slope} value={la.value} />
         </div>
       ))}
+    </div>
+  )
+}
+
+// ── Chart config selector ─────────────────────────────────────────────────────
+
+function ChartConfigSelector({ configs, activeId, onSelect, onCreate, onDelete }) {
+  const [creating, setCreating] = useState(false)
+  const [nameInput, setNameInput] = useState('')
+
+  const handleCreate = (e) => {
+    e.preventDefault()
+    const name = nameInput.trim()
+    if (!name) return
+    onCreate(name)
+    setNameInput('')
+    setCreating(false)
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+      {creating ? (
+        <form onSubmit={handleCreate} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+          <input
+            autoFocus
+            value={nameInput}
+            onChange={e => setNameInput(e.target.value)}
+            placeholder="Config name…"
+            onKeyDown={e => e.key === 'Escape' && setCreating(false)}
+            style={{
+              height: '24px', width: '110px', padding: '0 6px',
+              background: 'var(--bg-raised)', border: '1px solid var(--border)',
+              borderRadius: '4px', color: 'var(--text-primary)', fontSize: '11px', outline: 'none',
+            }}
+          />
+          <button type="submit" style={{
+            height: '24px', padding: '0 7px', fontSize: '11px',
+            background: 'var(--blue)', border: 'none', borderRadius: '4px',
+            color: '#fff', cursor: 'pointer',
+          }}>OK</button>
+          <button type="button" onClick={() => setCreating(false)} style={{
+            height: '24px', padding: '0 6px', fontSize: '13px',
+            background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+          }}>×</button>
+        </form>
+      ) : (
+        <>
+          <select
+            value={activeId ?? ''}
+            onChange={e => onSelect(Number(e.target.value))}
+            style={{
+              height: '24px', padding: '0 4px',
+              background: 'var(--bg-raised)', border: '1px solid var(--border)',
+              borderRadius: '4px', color: 'var(--text-primary)',
+              fontSize: '11px', cursor: 'pointer', outline: 'none', maxWidth: '110px',
+            }}
+          >
+            {configs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {configs.length > 1 && (
+            <button
+              onClick={() => onDelete(activeId)}
+              title="Delete this chart config"
+              style={{
+                height: '24px', padding: '0 5px', fontSize: '14px',
+                background: 'none', border: 'none',
+                color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1,
+              }}
+            >×</button>
+          )}
+          <button
+            onClick={() => setCreating(true)}
+            title="New chart config"
+            style={{
+              height: '24px', padding: '0 5px', fontSize: '16px',
+              background: 'none', border: 'none',
+              color: 'var(--text-muted)', cursor: 'pointer', lineHeight: 1,
+            }}
+          >+</button>
+        </>
+      )}
     </div>
   )
 }

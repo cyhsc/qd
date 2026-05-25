@@ -47,6 +47,23 @@ class Preferences(Base):
     data = Column(JSON, nullable=False, default=dict)
 
 
+class ChartConfig(Base):
+    """Named chart configuration — stores indicator settings (MA, MACD, Guppy, RWB, Squeeze)."""
+    __tablename__ = "chart_configs"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    name       = Column(String,  nullable=False, unique=True)
+    indicators = Column(JSON,    nullable=False, default=dict)
+    # indicators shape:
+    #   {
+    #     "maConfigs":      [...],
+    #     "macdConfigs":    [...],
+    #     "guppyConfigs":   [...],
+    #     "rwbConfigs":     [...],
+    #     "squeezeConfigs": [...],
+    #   }
+
+
 class ScreenConfig(Base):
     """Named screening configuration — stores per-condition verdict roles and params."""
     __tablename__ = "screen_configs"
