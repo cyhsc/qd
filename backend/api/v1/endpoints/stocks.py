@@ -402,11 +402,12 @@ async def get_screen(
             "consecutive_positive_bars": result.macd.consecutive_positive_bars,
         },
         "rwb": {
-            "rwb":                        fmt_line(result.rwb.rwb),
-            "fast_width":                 fmt_line(result.rwb.fast_width),
-            "slow_width":                 fmt_line(result.rwb.slow_width),
-            "fast_width_above_slow_width": result.rwb.fast_width_above_slow_width,
-            "bars_since_fast_above_slow":  result.rwb.bars_since_fast_above_slow,
+            "rwb":                                   fmt_line(result.rwb.rwb),
+            "fast_width":                            fmt_line(result.rwb.fast_width),
+            "slow_width":                            fmt_line(result.rwb.slow_width),
+            "fast_width_above_slow_width":           result.rwb.fast_width_above_slow_width,
+            "bars_since_fast_above_slow":            result.rwb.bars_since_fast_above_slow,
+            "slow_width_consecutive_positive_bars":  result.rwb.slow_width_consecutive_positive_bars,
         },
         "sqz": {
             "momentum":                  fmt_line(result.sqz.momentum),

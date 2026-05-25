@@ -56,6 +56,11 @@ _CONDITIONS: dict[str, dict] = {
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
         "fn": lambda m, r, s: True,
     },
+    "rwb_slow_width_consecutive_positive_bars": {
+        "description": "RWB slow_width consecutive positive bars — consecutive bars slow_width has been positive",
+        # Default fn is a placeholder; screen_individual() replaces it based on user config.
+        "fn": lambda m, r, s: True,
+    },
     # ── MACD ─────────────────────────────────────────────────────────────────
     "macd_line_positive": {
         "description": "MACD line positive — fast EMA is above slow EMA",
@@ -279,6 +284,11 @@ def screen_individual(
             "default_threshold": 3, "default_op": "gt",
             "description_tmpl": "RWB bars since fast width crossed above slow width {sym} {thr} — consecutive bars fast_width above slow_width is {lbl} {thr}",
             "value_fn": lambda m, r, s: r.bars_since_fast_above_slow,
+        },
+        "rwb_slow_width_consecutive_positive_bars": {
+            "default_threshold": 3, "default_op": "gt",
+            "description_tmpl": "RWB slow_width consecutive positive bars {sym} {thr} — consecutive bars slow_width has been positive is {lbl} {thr}",
+            "value_fn": lambda m, r, s: r.slow_width_consecutive_positive_bars,
         },
     }
 

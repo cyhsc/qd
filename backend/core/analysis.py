@@ -64,8 +64,9 @@ class RWBAnalysis:
     fast_width:                  LineAnalysis
     slow_width:                  LineAnalysis
     rwb:                         LineAnalysis
-    fast_width_above_slow_width: bool
-    bars_since_fast_above_slow:  int   # consecutive bars fast_width has been above slow_width (0 if currently not above)
+    fast_width_above_slow_width:          bool
+    bars_since_fast_above_slow:           int   # consecutive bars fast_width has been above slow_width (0 if currently not above)
+    slow_width_consecutive_positive_bars: int   # consecutive bars slow_width value has been positive (0 if currently not positive)
 
 
 @dataclass
@@ -185,12 +186,22 @@ def analyze_rwb(
             else:
                 break
 
+    # Count consecutive bars where slow_width value is positive, walking backwards.
+    slow_width_pos_bars = 0
+    if slow_vals and slow_vals[-1] > 0:
+        for v in reversed(slow_vals):
+            if v > 0:
+                slow_width_pos_bars += 1
+            else:
+                break
+
     return RWBAnalysis(
         fast_width=fast_analysis,
         slow_width=slow_analysis,
         rwb=_analyze_series(data["rwb"], flat_threshold),
         fast_width_above_slow_width=fast_analysis.value > slow_analysis.value,
         bars_since_fast_above_slow=bars_since_cross,
+        slow_width_consecutive_positive_bars=slow_width_pos_bars,
     )
 
 

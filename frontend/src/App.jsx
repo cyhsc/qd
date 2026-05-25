@@ -1013,6 +1013,11 @@ function AnalysisModal({ loading, error, data, configConditions, onToggleRule, o
                     {data.rwb.bars_since_fast_above_slow}
                   </span>
                 </span>
+                <span>Slow width positive bars:{' '}
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {data.rwb.slow_width_consecutive_positive_bars}
+                  </span>
+                </span>
               </div>
 
               {/* SQZ */}
@@ -1087,7 +1092,7 @@ function AnalysisModal({ loading, error, data, configConditions, onToggleRule, o
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                           {c.description}
                         </span>
-                        {(c.name === 'sqz_consecutive_positive_bars' || c.name === 'macd_histogram_consecutive_positive_bars' || c.name === 'rwb_bars_since_fast_above_slow') && (() => {
+                        {(c.name === 'sqz_consecutive_positive_bars' || c.name === 'macd_histogram_consecutive_positive_bars' || c.name === 'rwb_bars_since_fast_above_slow' || c.name === 'rwb_slow_width_consecutive_positive_bars') && (() => {
                           const p = configConditions?.[c.name] ?? { threshold: 3, op: 'gt' }
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
