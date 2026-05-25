@@ -836,15 +836,6 @@ export default function App() {
               )
             })}
             <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
-            {/* Chart config selector */}
-            <ChartConfigSelector
-              configs={chartConfigs}
-              activeId={activeChartConfigId}
-              onSelect={handleChartConfigChange}
-              onCreate={handleCreateChartConfig}
-              onDelete={handleDeleteChartConfig}
-            />
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
             <button
               type="button"
               onClick={handleAnalysis}
@@ -867,6 +858,15 @@ export default function App() {
               guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
               rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
               squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
+            />
+            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+            {/* Chart config selector */}
+            <ChartConfigSelector
+              configs={chartConfigs}
+              activeId={activeChartConfigId}
+              onSelect={handleChartConfigChange}
+              onCreate={handleCreateChartConfig}
+              onDelete={handleDeleteChartConfig}
             />
           </div>
         </div>
