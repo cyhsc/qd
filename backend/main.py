@@ -43,22 +43,26 @@ async def lifespan(app: FastAPI):
             ))
             await db.commit()
 
-    # Seed the default "Default" chart config if none exist
+    # Seed the three built-in chart configs (Default / Weekly / Monthly) if missing
+    _builtin_configs = ["Default", "Weekly", "Monthly"]
     async with SessionLocal() as db:
-        count = (await db.execute(select(func.count()).select_from(ChartConfig))).scalar()
-        if count == 0:
-            db.add(ChartConfig(
-                name="Default",
-                indicators={
-                    "chartType":      "candlestick",
-                    "maConfigs":      [],
-                    "macdConfigs":    [],
-                    "guppyConfigs":   [],
-                    "rwbConfigs":     [],
-                    "squeezeConfigs": [],
-                },
-            ))
-            await db.commit()
+        for name in _builtin_configs:
+            exists = (await db.execute(
+                select(func.count()).select_from(ChartConfig).where(ChartConfig.name == name)
+            )).scalar()
+            if not exists:
+                db.add(ChartConfig(
+                    name=name,
+                    indicators={
+                        "chartType":      "candlestick",
+                        "maConfigs":      [],
+                        "macdConfigs":    [],
+                        "guppyConfigs":   [],
+                        "rwbConfigs":     [],
+                        "squeezeConfigs": [],
+                    },
+                ))
+        await db.commit()
     yield
 
 

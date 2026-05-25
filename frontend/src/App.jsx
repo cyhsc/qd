@@ -19,6 +19,10 @@ const INTERVAL_DEFAULT_RANGE = {
 }
 const INTERVAL_LABELS    = { D: 'Day', W: 'Week', M: 'Month' }
 
+// Which named chart config to activate for each interval
+// (null / anything else → 'Default')
+const INTERVAL_CONFIG_NAME = { W: 'Weekly', M: 'Monthly' }
+
 const INTRADAY_MAX_DAYS = {
   '1m': 7, '5m': 60,
   '15m': 60, '30m': 60, '1h': 730,
@@ -235,8 +239,13 @@ export default function App() {
       .then(configs => {
         setChartConfigs(configs)
         if (configs.length === 0) return
-        // Restore the previously active config (or fall back to first)
-        const saved = configs.find(c => c.id === savedActiveChartConfigId) ?? configs[0]
+        // On load, pick the config for the current interval (interval starts as 'D' → 'Default').
+        // Fall back to the previously saved config, then to the first available.
+        const intervalName = INTERVAL_CONFIG_NAME[interval] ?? 'Default'
+        const intervalCfg  = configs.find(c => c.name === intervalName)
+        const saved = intervalCfg
+          ?? configs.find(c => c.id === savedActiveChartConfigId)
+          ?? configs[0]
         setActiveChartConfigId(saved.id)
 
         // If the saved config has no indicators, migrate from the localStorage snapshot
@@ -599,13 +608,23 @@ export default function App() {
     if (nextInterval !== interval) setInterval(null)
   }
 
-  // Interval change requires new data (different bar size = different max period)
+  // Interval change requires new data (different bar size = different max period).
+  // Also auto-switches to the interval-specific chart config (W→Weekly, M→Monthly,
+  // everything else→Default).
   const handleInterval = (ivl) => {
-    const next       = ivl === interval ? null : ivl
-    const nextRange  = next ? (INTERVAL_DEFAULT_RANGE[next] ?? bestRange(range, next)) : range
+    const next      = ivl === interval ? null : ivl
+    const nextRange = next ? (INTERVAL_DEFAULT_RANGE[next] ?? bestRange(range, next)) : range
     setInterval(next)
     if (nextRange !== range) setRange(nextRange)
     if (symbol) fetchStock(symbol, next)
+
+    // Switch chart config for this interval
+    const targetName = INTERVAL_CONFIG_NAME[next] ?? 'Default'
+    const cfg = chartConfigs.find(c => c.name === targetName)
+    if (cfg && cfg.id !== activeChartConfigId) {
+      setActiveChartConfigId(cfg.id)
+      applyChartConfig(cfg.indicators)
+    }
   }
 
   // ── Select symbol (from watchlist or search) ──────────────────────────────
