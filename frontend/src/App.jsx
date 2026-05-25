@@ -139,7 +139,8 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(() => lsJson('qd_sidebar_width', 220))
 
   // Sidebar resize drag
-  const sidebarDragRef = useRef(null)
+  const sidebarDragRef  = useRef(null)
+  const symbolInputRef  = useRef(null)
   const handleSidebarMouseDown = useCallback((e) => {
     e.preventDefault()
     const startX = e.clientX
@@ -335,6 +336,8 @@ export default function App() {
     if (!sym) return
     setSymbol(sym)
     fetchStock(sym, interval)
+    setInput('')
+    symbolInputRef.current?.blur()
   }
 
   const fetchFinancials = useCallback(async (sym) => {
@@ -443,6 +446,25 @@ export default function App() {
     const t = setTimeout(() => handleAnalysis(), 400)
     return () => clearTimeout(t)
   }, [activeConditions]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Global keydown: route alphanumeric keys to the symbol input when nothing else is focused
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      // Ignore modifier combos (Ctrl/Cmd shortcuts)
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      // Ignore if already typing in any input / textarea / select
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      // Ignore if the analysis modal is open (it has its own inputs)
+      if (analysisOpenRef.current) return
+      // Only intercept printable alphanumeric keys and Backspace
+      if (!/^[a-zA-Z0-9]$/.test(e.key) && e.key !== 'Backspace') return
+      symbolInputRef.current?.focus()
+      // Don't preventDefault — let the keystroke land naturally in the now-focused input
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   // Range only zooms — no re-fetch
   const handleRange = (rng) => {
@@ -603,6 +625,7 @@ export default function App() {
 
           <form onSubmit={handleSearch} style={{ display: 'flex', gap: '6px' }}>
             <input
+              ref={symbolInputRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               placeholder="Symbol — e.g. AAPL, TSLA"
