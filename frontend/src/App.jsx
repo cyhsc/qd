@@ -109,7 +109,9 @@ export default function App() {
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
   const [verdictRules,  setVerdictRules]  = useState(() => lsJson('qd_verdict_rules',  {}))
   const [conditionParams, setConditionParams] = useState(() => lsJson('qd_condition_params', {
-    sqz_consecutive_positive_bars: { threshold: 3, op: 'gt' },
+    sqz_consecutive_positive_bars:              { threshold: 3, op: 'gt' },
+    macd_histogram_consecutive_positive_bars:   { threshold: 3, op: 'gt' },
+    rwb_bars_since_fast_above_slow:             { threshold: 3, op: 'gt' },
   }))
 
   // Pre-calculated indicator data from backend
@@ -394,10 +396,16 @@ export default function App() {
     setAnalysisError(null)
     setAnalysisLoading(true)
     try {
-      const sqzP = conditionParams.sqz_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
-      const qs   = new URLSearchParams({
-        sqz_pos_bars_threshold: sqzP.threshold,
-        sqz_pos_bars_op:        sqzP.op,
+      const sqzP  = conditionParams.sqz_consecutive_positive_bars            ?? { threshold: 3, op: 'gt' }
+      const macdP = conditionParams.macd_histogram_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
+      const rwbP  = conditionParams.rwb_bars_since_fast_above_slow           ?? { threshold: 3, op: 'gt' }
+      const qs    = new URLSearchParams({
+        sqz_pos_bars_threshold:             sqzP.threshold,
+        sqz_pos_bars_op:                    sqzP.op,
+        macd_hist_pos_bars_threshold:       macdP.threshold,
+        macd_hist_pos_bars_op:              macdP.op,
+        rwb_fast_above_slow_bars_threshold: rwbP.threshold,
+        rwb_fast_above_slow_bars_op:        rwbP.op,
       })
       const res = await fetch(`/api/stocks/${sym}/screen?${qs}`)
       if (!res.ok) {
@@ -927,6 +935,12 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, condi
                 ['Signal',    data.macd.signal],
                 ['Histogram', data.macd.histogram],
               ]} />
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px' }}>
+                Consecutive positive histogram bars:{' '}
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {data.macd.consecutive_positive_bars}
+                </span>
+              </div>
 
               {/* RWB */}
               <SectionHeader label="RWB  (fast 3-15 / slow 30-60)" />
@@ -935,10 +949,16 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, condi
                 ['Fast width', data.rwb.fast_width],
                 ['Slow width', data.rwb.slow_width],
               ]} />
-              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px' }}>
-                Fast width &gt; slow width: {' '}
-                <span style={{ color: data.rwb.fast_width_above_slow_width ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                  {String(data.rwb.fast_width_above_slow_width)}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '12px', paddingLeft: '2px', display: 'flex', gap: '16px' }}>
+                <span>Fast width &gt; slow width:{' '}
+                  <span style={{ color: data.rwb.fast_width_above_slow_width ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                    {String(data.rwb.fast_width_above_slow_width)}
+                  </span>
+                </span>
+                <span>Bars since cross-up:{' '}
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {data.rwb.bars_since_fast_above_slow}
+                  </span>
                 </span>
               </div>
 
@@ -1014,14 +1034,14 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, condi
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                           {c.description}
                         </span>
-                        {c.name === 'sqz_consecutive_positive_bars' && (() => {
-                          const p = conditionParams?.sqz_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
+                        {(c.name === 'sqz_consecutive_positive_bars' || c.name === 'macd_histogram_consecutive_positive_bars' || c.name === 'rwb_bars_since_fast_above_slow') && (() => {
+                          const p = conditionParams?.[c.name] ?? { threshold: 3, op: 'gt' }
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Consecutive bars</span>
                               <select
                                 value={p.op}
-                                onChange={e => onConditionParam('sqz_consecutive_positive_bars', 'op', e.target.value)}
+                                onChange={e => onConditionParam(c.name, 'op', e.target.value)}
                                 style={{
                                   height: '22px', padding: '0 4px', fontSize: '11px',
                                   background: 'var(--bg-raised)', border: '1px solid var(--border)',
@@ -1036,7 +1056,7 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, condi
                                 type="number"
                                 min="1"
                                 value={p.threshold}
-                                onChange={e => onConditionParam('sqz_consecutive_positive_bars', 'threshold', Math.max(1, parseInt(e.target.value) || 1))}
+                                onChange={e => onConditionParam(c.name, 'threshold', Math.max(1, parseInt(e.target.value) || 1))}
                                 style={{
                                   width: '48px', height: '22px', padding: '0 4px', fontSize: '11px',
                                   background: 'var(--bg-raised)', border: '1px solid var(--border)',

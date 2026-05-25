@@ -51,6 +51,11 @@ _CONDITIONS: dict[str, dict] = {
         "description": "RWB fast_width > slow_width — short-term cluster more dynamic than long-term",
         "fn": lambda m, r, s: r.fast_width_above_slow_width,
     },
+    "rwb_bars_since_fast_above_slow": {
+        "description": "RWB bars since fast width crossed above slow width — consecutive bars fast_width has been above slow_width",
+        # Default fn is a placeholder; screen_individual() replaces it based on user config.
+        "fn": lambda m, r, s: True,
+    },
     # ── MACD ─────────────────────────────────────────────────────────────────
     "macd_line_positive": {
         "description": "MACD line positive — fast EMA is above slow EMA",
@@ -87,6 +92,11 @@ _CONDITIONS: dict[str, dict] = {
     },
     "sqz_consecutive_positive_bars": {
         "description": "SQZ consecutive positive bars — number of bars since momentum last turned positive",
+        # Default fn is a placeholder; screen_individual() replaces it based on user config.
+        "fn": lambda m, r, s: True,
+    },
+    "macd_histogram_consecutive_positive_bars": {
+        "description": "MACD histogram consecutive positive bars — number of bars since histogram last turned positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
         "fn": lambda m, r, s: True,
     },
@@ -192,7 +202,11 @@ def _build_report(result: ScreenResult) -> str:
 def screen_individual(
     symbol: str,
     sqz_pos_bars_threshold: int = 3,
-    sqz_pos_bars_op: str = "gt",   # "gt" | "eq" | "lt"
+    sqz_pos_bars_op: str = "gt",         # "gt" | "eq" | "lt"
+    macd_hist_pos_bars_threshold: int = 3,
+    macd_hist_pos_bars_op: str = "gt",   # "gt" | "eq" | "lt"
+    rwb_fast_above_slow_bars_threshold: int = 3,
+    rwb_fast_above_slow_bars_op: str = "gt",  # "gt" | "eq" | "lt"
 ) -> ScreenResult:
     """
     Screen a single stock symbol against momentum/trend conditions.
@@ -236,6 +250,7 @@ def screen_individual(
     # ── Build dynamic condition descriptions ─────────────────────────────
     _op_symbol = {"gt": ">", "eq": "=", "lt": "<"}
     _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "less than"}
+
     op_sym = _op_symbol.get(sqz_pos_bars_op, ">")
     op_lbl = _op_label.get(sqz_pos_bars_op, "greater than")
     _CONDITIONS["sqz_consecutive_positive_bars"]["description"] = (
@@ -250,6 +265,36 @@ def screen_individual(
         if sqz_pos_bars_op == "lt": return n < sqz_pos_bars_threshold
         return False
     _CONDITIONS["sqz_consecutive_positive_bars"]["fn"] = _sqz_pos_bars_fn
+
+    mh_op_sym = _op_symbol.get(macd_hist_pos_bars_op, ">")
+    mh_op_lbl = _op_label.get(macd_hist_pos_bars_op, "greater than")
+    _CONDITIONS["macd_histogram_consecutive_positive_bars"]["description"] = (
+        f"MACD histogram consecutive positive bars {mh_op_sym} {macd_hist_pos_bars_threshold} — "
+        f"bars since histogram last turned positive is {mh_op_lbl} {macd_hist_pos_bars_threshold}"
+    )
+
+    def _macd_hist_pos_bars_fn(m, r, s):
+        n = m.consecutive_positive_bars
+        if macd_hist_pos_bars_op == "gt": return n > macd_hist_pos_bars_threshold
+        if macd_hist_pos_bars_op == "eq": return n == macd_hist_pos_bars_threshold
+        if macd_hist_pos_bars_op == "lt": return n < macd_hist_pos_bars_threshold
+        return False
+    _CONDITIONS["macd_histogram_consecutive_positive_bars"]["fn"] = _macd_hist_pos_bars_fn
+
+    rwb_op_sym = _op_symbol.get(rwb_fast_above_slow_bars_op, ">")
+    rwb_op_lbl = _op_label.get(rwb_fast_above_slow_bars_op, "greater than")
+    _CONDITIONS["rwb_bars_since_fast_above_slow"]["description"] = (
+        f"RWB bars since fast width crossed above slow width {rwb_op_sym} {rwb_fast_above_slow_bars_threshold} — "
+        f"consecutive bars fast_width above slow_width is {rwb_op_lbl} {rwb_fast_above_slow_bars_threshold}"
+    )
+
+    def _rwb_fast_above_slow_bars_fn(m, r, s):
+        n = r.bars_since_fast_above_slow
+        if rwb_fast_above_slow_bars_op == "gt": return n > rwb_fast_above_slow_bars_threshold
+        if rwb_fast_above_slow_bars_op == "eq": return n == rwb_fast_above_slow_bars_threshold
+        if rwb_fast_above_slow_bars_op == "lt": return n < rwb_fast_above_slow_bars_threshold
+        return False
+    _CONDITIONS["rwb_bars_since_fast_above_slow"]["fn"] = _rwb_fast_above_slow_bars_fn
 
     # ── Evaluate every condition ──────────────────────────────────────────
     conditions: list[ConditionResult] = []

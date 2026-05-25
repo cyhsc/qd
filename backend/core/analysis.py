@@ -52,9 +52,10 @@ class LineAnalysis:
 @dataclass
 class MACDAnalysis:
     """Full MACD analysis result."""
-    macd:      LineAnalysis
-    signal:    LineAnalysis
-    histogram: LineAnalysis
+    macd:                      LineAnalysis
+    signal:                    LineAnalysis
+    histogram:                 LineAnalysis
+    consecutive_positive_bars: int   # bars since histogram last turned positive (0 if currently non-positive)
 
 
 @dataclass
@@ -64,6 +65,7 @@ class RWBAnalysis:
     slow_width:                  LineAnalysis
     rwb:                         LineAnalysis
     fast_width_above_slow_width: bool
+    bars_since_fast_above_slow:  int   # consecutive bars fast_width has been above slow_width (0 if currently not above)
 
 
 @dataclass
@@ -137,10 +139,21 @@ def analyze_macd(
     times = list(range(len(arr)))
     data  = _calc_macd(arr, fast_period, slow_period, signal_period, times)
 
+    # Count consecutive positive histogram bars from the most recent bar backwards.
+    hist_values = [pt["value"] for pt in data["histogram"]]
+    consecutive_positive = 0
+    if hist_values and float(hist_values[-1]) > 0:
+        for v in reversed(hist_values):
+            if float(v) > 0:
+                consecutive_positive += 1
+            else:
+                break
+
     return MACDAnalysis(
         macd=_analyze_series(data["macd_line"],   flat_threshold),
         signal=_analyze_series(data["signal_line"], flat_threshold),
         histogram=_analyze_series(data["histogram"],  flat_threshold),
+        consecutive_positive_bars=consecutive_positive,
     )
 
 
@@ -161,11 +174,23 @@ def analyze_rwb(
     fast_analysis = _analyze_series(data["fast_width"], flat_threshold)
     slow_analysis = _analyze_series(data["slow_width"], flat_threshold)
 
+    # Count consecutive bars where fast_width > slow_width, walking backwards.
+    fast_vals = [float(pt["value"]) for pt in data["fast_width"]]
+    slow_vals = [float(pt["value"]) for pt in data["slow_width"]]
+    bars_since_cross = 0
+    if fast_vals and slow_vals and fast_vals[-1] > slow_vals[-1]:
+        for f, s in zip(reversed(fast_vals), reversed(slow_vals)):
+            if f > s:
+                bars_since_cross += 1
+            else:
+                break
+
     return RWBAnalysis(
         fast_width=fast_analysis,
         slow_width=slow_analysis,
         rwb=_analyze_series(data["rwb"], flat_threshold),
         fast_width_above_slow_width=fast_analysis.value > slow_analysis.value,
+        bars_since_fast_above_slow=bars_since_cross,
     )
 
 

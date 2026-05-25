@@ -347,8 +347,12 @@ async def get_info(symbol: str):
 @router.get("/{symbol}/screen")
 async def get_screen(
     symbol: str,
-    sqz_pos_bars_threshold: int = Query(default=3),
-    sqz_pos_bars_op: str        = Query(default="gt"),
+    sqz_pos_bars_threshold: int  = Query(default=3),
+    sqz_pos_bars_op: str         = Query(default="gt"),
+    macd_hist_pos_bars_threshold: int = Query(default=3),
+    macd_hist_pos_bars_op: str        = Query(default="gt"),
+    rwb_fast_above_slow_bars_threshold: int = Query(default=3),
+    rwb_fast_above_slow_bars_op: str        = Query(default="gt"),
 ):
     sym  = symbol.upper()
     loop = asyncio.get_event_loop()
@@ -358,6 +362,10 @@ async def get_screen(
                 sym,
                 sqz_pos_bars_threshold=sqz_pos_bars_threshold,
                 sqz_pos_bars_op=sqz_pos_bars_op,
+                macd_hist_pos_bars_threshold=macd_hist_pos_bars_threshold,
+                macd_hist_pos_bars_op=macd_hist_pos_bars_op,
+                rwb_fast_above_slow_bars_threshold=rwb_fast_above_slow_bars_threshold,
+                rwb_fast_above_slow_bars_op=rwb_fast_above_slow_bars_op,
             )),
             timeout=60.0,
         )
@@ -389,15 +397,17 @@ async def get_screen(
             for c in result.conditions
         ],
         "macd": {
-            "macd":      fmt_line(result.macd.macd),
-            "signal":    fmt_line(result.macd.signal),
-            "histogram": fmt_line(result.macd.histogram),
+            "macd":                      fmt_line(result.macd.macd),
+            "signal":                    fmt_line(result.macd.signal),
+            "histogram":                 fmt_line(result.macd.histogram),
+            "consecutive_positive_bars": result.macd.consecutive_positive_bars,
         },
         "rwb": {
-            "rwb":        fmt_line(result.rwb.rwb),
-            "fast_width": fmt_line(result.rwb.fast_width),
-            "slow_width": fmt_line(result.rwb.slow_width),
+            "rwb":                        fmt_line(result.rwb.rwb),
+            "fast_width":                 fmt_line(result.rwb.fast_width),
+            "slow_width":                 fmt_line(result.rwb.slow_width),
             "fast_width_above_slow_width": result.rwb.fast_width_above_slow_width,
+            "bars_since_fast_above_slow":  result.rwb.bars_since_fast_above_slow,
         },
         "sqz": {
             "momentum":                  fmt_line(result.sqz.momentum),
