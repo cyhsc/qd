@@ -90,9 +90,6 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light')
 
-  // Persist chart type to localStorage
-  useEffect(() => { localStorage.setItem('qd_chart_type', chartType) }, [chartType])
-
   // ── Chart / indicator config state ───────────────────────────────────────
   // Initialised from localStorage so the UI is immediately usable; the backend
   // load below may overwrite these once it resolves.
@@ -102,6 +99,9 @@ export default function App() {
   const [range,         setRange]         = useState('1Y')
   const [interval,      setInterval]      = useState('D')
   const [chartType,     setChartType]     = useState(() => lsJson('qd_chart_type', 'candlestick'))
+
+  // Persist chart type to localStorage (must be after useState above)
+  useEffect(() => { localStorage.setItem('qd_chart_type', chartType) }, [chartType])
   const [info,          setInfo]          = useState(null)
   const [candles,       setCandles]       = useState(null)
   const [volume,        setVolume]        = useState(null)
