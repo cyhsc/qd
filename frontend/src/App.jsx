@@ -90,6 +90,9 @@ export default function App() {
 
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light')
 
+  // Persist chart type to localStorage
+  useEffect(() => { localStorage.setItem('qd_chart_type', chartType) }, [chartType])
+
   // ── Chart / indicator config state ───────────────────────────────────────
   // Initialised from localStorage so the UI is immediately usable; the backend
   // load below may overwrite these once it resolves.
@@ -98,6 +101,7 @@ export default function App() {
   const [symbol,        setSymbol]        = useState('')
   const [range,         setRange]         = useState('1Y')
   const [interval,      setInterval]      = useState('D')
+  const [chartType,     setChartType]     = useState(() => lsJson('qd_chart_type', 'candlestick'))
   const [info,          setInfo]          = useState(null)
   const [candles,       setCandles]       = useState(null)
   const [volume,        setVolume]        = useState(null)
@@ -872,6 +876,9 @@ export default function App() {
               )
             })}
             <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+            {/* Chart type selector */}
+            <ChartTypeSelector value={chartType} onChange={setChartType} />
+            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
             <button
               type="button"
               onClick={handleAnalysis}
@@ -964,6 +971,7 @@ export default function App() {
           {candles && !loading && (
             <StockChart
               candles={candles}    volume={volume}
+              chartType={chartType}
               visibleDays={RANGE_DAYS[range]}
               theme={theme}
               maConfigs={maConfigs}       maData={maData}
@@ -1393,6 +1401,36 @@ function ChartConfigSelector({ configs, activeId, onSelect, onCreate, onDelete }
         </>
       )}
     </div>
+  )
+}
+
+// ── Chart type selector ───────────────────────────────────────────────────────
+
+const CHART_TYPE_OPTIONS = [
+  { value: 'candlestick', label: 'Candles'  },
+  { value: 'bars',        label: 'Bars'     },
+  { value: 'line',        label: 'Line'     },
+  { value: 'renko',       label: 'Renko'    },
+  { value: 'pnf',         label: 'P&F'      },
+]
+
+function ChartTypeSelector({ value, onChange }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      title="Chart type"
+      style={{
+        height: '24px', padding: '0 6px',
+        background: 'var(--bg-raised)', border: '1px solid var(--border)',
+        borderRadius: '4px', color: 'var(--text-primary)',
+        fontSize: '11px', fontWeight: 500, cursor: 'pointer', outline: 'none',
+      }}
+    >
+      {CHART_TYPE_OPTIONS.map(opt => (
+        <option key={opt.value} value={opt.value}>{opt.label}</option>
+      ))}
+    </select>
   )
 }
 
