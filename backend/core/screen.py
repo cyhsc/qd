@@ -201,23 +201,25 @@ def _build_report(result: ScreenResult) -> str:
 
 def screen_individual(
     symbol: str,
-    sqz_pos_bars_threshold: int = 3,
-    sqz_pos_bars_op: str = "gt",         # "gt" | "eq" | "lt"
-    macd_hist_pos_bars_threshold: int = 3,
-    macd_hist_pos_bars_op: str = "gt",   # "gt" | "eq" | "lt"
-    rwb_fast_above_slow_bars_threshold: int = 3,
-    rwb_fast_above_slow_bars_op: str = "gt",  # "gt" | "eq" | "lt"
+    condition_overrides: dict | None = None,
 ) -> ScreenResult:
     """
     Screen a single stock symbol against momentum/trend conditions.
-
-    Verdict is True only when every condition listed in ``_VERDICT_RULES``
-    matches its required value (True = must pass, False = must fail).
 
     Parameters
     ----------
     symbol:
         Ticker symbol (e.g. ``"AAPL"``).  Case-insensitive.
+    condition_overrides:
+        Per-condition settings dict, keyed by condition name.  Each value is a
+        dict that may contain any of:
+          ``"verdict_role"``  – ``True`` (required) / ``False`` (must-fail) /
+                                ``None`` (informational).  Overrides the
+                                backend default in ``_VERDICT_RULES``.
+          ``"threshold"``     – int threshold for parametric conditions.
+          ``"op"``            – ``"gt"`` | ``"eq"`` | ``"lt"`` for parametric
+                                conditions.
+        Conditions absent from ``condition_overrides`` use backend defaults.
 
     Returns
     -------
@@ -230,7 +232,8 @@ def screen_individual(
     ValueError
         If Yahoo Finance returns no price data for the symbol.
     """
-    sym = symbol.upper().strip()
+    sym       = symbol.upper().strip()
+    overrides = condition_overrides or {}
     logger.info("Screening %s …", sym)
 
     # ── Fetch 3 years of daily OHLC from Yahoo Finance ────────────────────
@@ -247,54 +250,57 @@ def screen_individual(
     rwb_result  = analyze_rwb(closes)
     sqz_result  = analyze_sqz(closes, highs, lows)
 
-    # ── Build dynamic condition descriptions ─────────────────────────────
+    # ── Effective verdict rules: backend defaults overridden by config ────
+    effective_verdict_rules: dict[str, bool] = {}
+    for name, required in _VERDICT_RULES.items():
+        ov = overrides.get(name, {})
+        effective_verdict_rules[name] = ov.get("verdict_role", required)
+    # Also pick up any conditions that are in overrides but NOT in _VERDICT_RULES
+    for name, ov in overrides.items():
+        if name not in effective_verdict_rules and "verdict_role" in ov and ov["verdict_role"] is not None:
+            effective_verdict_rules[name] = ov["verdict_role"]
+
+    # ── Build dynamic parametric condition descriptions and fns ──────────
     _op_symbol = {"gt": ">", "eq": "=", "lt": "<"}
     _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "less than"}
 
-    op_sym = _op_symbol.get(sqz_pos_bars_op, ">")
-    op_lbl = _op_label.get(sqz_pos_bars_op, "greater than")
-    _CONDITIONS["sqz_consecutive_positive_bars"]["description"] = (
-        f"SQZ consecutive positive bars {op_sym} {sqz_pos_bars_threshold} — "
-        f"bars since momentum last turned positive is {op_lbl} {sqz_pos_bars_threshold}"
-    )
+    _PARAMETRIC = {
+        "sqz_consecutive_positive_bars": {
+            "default_threshold": 3, "default_op": "gt",
+            "description_tmpl": "SQZ consecutive positive bars {sym} {thr} — bars since momentum last turned positive is {lbl} {thr}",
+            "value_fn": lambda m, r, s: s.consecutive_positive_bars,
+        },
+        "macd_histogram_consecutive_positive_bars": {
+            "default_threshold": 3, "default_op": "gt",
+            "description_tmpl": "MACD histogram consecutive positive bars {sym} {thr} — bars since histogram last turned positive is {lbl} {thr}",
+            "value_fn": lambda m, r, s: m.consecutive_positive_bars,
+        },
+        "rwb_bars_since_fast_above_slow": {
+            "default_threshold": 3, "default_op": "gt",
+            "description_tmpl": "RWB bars since fast width crossed above slow width {sym} {thr} — consecutive bars fast_width above slow_width is {lbl} {thr}",
+            "value_fn": lambda m, r, s: r.bars_since_fast_above_slow,
+        },
+    }
 
-    def _sqz_pos_bars_fn(m, r, s):
-        n = s.consecutive_positive_bars
-        if sqz_pos_bars_op == "gt": return n > sqz_pos_bars_threshold
-        if sqz_pos_bars_op == "eq": return n == sqz_pos_bars_threshold
-        if sqz_pos_bars_op == "lt": return n < sqz_pos_bars_threshold
-        return False
-    _CONDITIONS["sqz_consecutive_positive_bars"]["fn"] = _sqz_pos_bars_fn
-
-    mh_op_sym = _op_symbol.get(macd_hist_pos_bars_op, ">")
-    mh_op_lbl = _op_label.get(macd_hist_pos_bars_op, "greater than")
-    _CONDITIONS["macd_histogram_consecutive_positive_bars"]["description"] = (
-        f"MACD histogram consecutive positive bars {mh_op_sym} {macd_hist_pos_bars_threshold} — "
-        f"bars since histogram last turned positive is {mh_op_lbl} {macd_hist_pos_bars_threshold}"
-    )
-
-    def _macd_hist_pos_bars_fn(m, r, s):
-        n = m.consecutive_positive_bars
-        if macd_hist_pos_bars_op == "gt": return n > macd_hist_pos_bars_threshold
-        if macd_hist_pos_bars_op == "eq": return n == macd_hist_pos_bars_threshold
-        if macd_hist_pos_bars_op == "lt": return n < macd_hist_pos_bars_threshold
-        return False
-    _CONDITIONS["macd_histogram_consecutive_positive_bars"]["fn"] = _macd_hist_pos_bars_fn
-
-    rwb_op_sym = _op_symbol.get(rwb_fast_above_slow_bars_op, ">")
-    rwb_op_lbl = _op_label.get(rwb_fast_above_slow_bars_op, "greater than")
-    _CONDITIONS["rwb_bars_since_fast_above_slow"]["description"] = (
-        f"RWB bars since fast width crossed above slow width {rwb_op_sym} {rwb_fast_above_slow_bars_threshold} — "
-        f"consecutive bars fast_width above slow_width is {rwb_op_lbl} {rwb_fast_above_slow_bars_threshold}"
-    )
-
-    def _rwb_fast_above_slow_bars_fn(m, r, s):
-        n = r.bars_since_fast_above_slow
-        if rwb_fast_above_slow_bars_op == "gt": return n > rwb_fast_above_slow_bars_threshold
-        if rwb_fast_above_slow_bars_op == "eq": return n == rwb_fast_above_slow_bars_threshold
-        if rwb_fast_above_slow_bars_op == "lt": return n < rwb_fast_above_slow_bars_threshold
-        return False
-    _CONDITIONS["rwb_bars_since_fast_above_slow"]["fn"] = _rwb_fast_above_slow_bars_fn
+    for cname, meta in _PARAMETRIC.items():
+        ov        = overrides.get(cname, {})
+        threshold = int(ov.get("threshold", meta["default_threshold"]))
+        op        = ov.get("op", meta["default_op"])
+        op_sym    = _op_symbol.get(op, ">")
+        op_lbl    = _op_label.get(op, "greater than")
+        _CONDITIONS[cname]["description"] = meta["description_tmpl"].format(
+            sym=op_sym, thr=threshold, lbl=op_lbl,
+        )
+        value_fn = meta["value_fn"]
+        def _make_fn(vfn, t, o):
+            def _fn(m, r, s):
+                n = vfn(m, r, s)
+                if o == "gt": return n > t
+                if o == "eq": return n == t
+                if o == "lt": return n < t
+                return False
+            return _fn
+        _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op)
 
     # ── Evaluate every condition ──────────────────────────────────────────
     conditions: list[ConditionResult] = []
@@ -304,7 +310,7 @@ def screen_individual(
             name=name,
             description=spec["description"],
             passed=passed,
-            verdict_role=_VERDICT_RULES.get(name),   # None if not in rules
+            verdict_role=effective_verdict_rules.get(name),  # None if not required
         ))
 
     score = sum(c.passed for c in conditions)

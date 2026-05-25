@@ -11,7 +11,7 @@ import yfinance as yf
 
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
 from core.screen import screen_individual
-from db import CacheMeta, Price, get_db
+from db import CacheMeta, Price, ScreenConfig, get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -347,25 +347,24 @@ async def get_info(symbol: str):
 @router.get("/{symbol}/screen")
 async def get_screen(
     symbol: str,
-    sqz_pos_bars_threshold: int  = Query(default=3),
-    sqz_pos_bars_op: str         = Query(default="gt"),
-    macd_hist_pos_bars_threshold: int = Query(default=3),
-    macd_hist_pos_bars_op: str        = Query(default="gt"),
-    rwb_fast_above_slow_bars_threshold: int = Query(default=3),
-    rwb_fast_above_slow_bars_op: str        = Query(default="gt"),
+    config_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
-    sym  = symbol.upper()
+    sym = symbol.upper()
+
+    # Load condition overrides from the named screen config (if provided)
+    condition_overrides: dict = {}
+    if config_id is not None:
+        row = await db.get(ScreenConfig, config_id)
+        if row:
+            condition_overrides = row.conditions or {}
+
     loop = asyncio.get_event_loop()
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(None, lambda: screen_individual(
                 sym,
-                sqz_pos_bars_threshold=sqz_pos_bars_threshold,
-                sqz_pos_bars_op=sqz_pos_bars_op,
-                macd_hist_pos_bars_threshold=macd_hist_pos_bars_threshold,
-                macd_hist_pos_bars_op=macd_hist_pos_bars_op,
-                rwb_fast_above_slow_bars_threshold=rwb_fast_above_slow_bars_threshold,
-                rwb_fast_above_slow_bars_op=rwb_fast_above_slow_bars_op,
+                condition_overrides=condition_overrides,
             )),
             timeout=60.0,
         )

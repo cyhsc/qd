@@ -47,6 +47,24 @@ class Preferences(Base):
     data = Column(JSON, nullable=False, default=dict)
 
 
+class ScreenConfig(Base):
+    """Named screening configuration — stores per-condition verdict roles and params."""
+    __tablename__ = "screen_configs"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    name       = Column(String,  nullable=False, unique=True)
+    conditions = Column(JSON,    nullable=False, default=dict)
+    # conditions shape:
+    #   {
+    #     "<condition_name>": {
+    #       "verdict_role": true | false | null,  # overrides backend default; omit = use default
+    #       "threshold":    <int>,                # parametric conditions only
+    #       "op":           "gt" | "eq" | "lt",   # parametric conditions only
+    #     },
+    #     ...
+    #   }
+
+
 class Price(Base):
     """Cached OHLCV bars — upserted on every successful yfinance fetch."""
     __tablename__ = "prices"

@@ -107,12 +107,9 @@ export default function App() {
   const [guppyConfigs,  setGuppyConfigs]  = useState(() => lsJson('qd_guppy_configs',  []))
   const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
-  const [verdictRules,  setVerdictRules]  = useState(() => lsJson('qd_verdict_rules',  {}))
-  const [conditionParams, setConditionParams] = useState(() => lsJson('qd_condition_params', {
-    sqz_consecutive_positive_bars:              { threshold: 3, op: 'gt' },
-    macd_histogram_consecutive_positive_bars:   { threshold: 3, op: 'gt' },
-    rwb_bars_since_fast_above_slow:             { threshold: 3, op: 'gt' },
-  }))
+  // Screen configs — list of { id, name, conditions } objects, persisted on backend
+  const [screenConfigs,  setScreenConfigs]  = useState([])
+  const [activeConfigId, setActiveConfigId] = useState(null)
 
   // Pre-calculated indicator data from backend
   const [maData,      setMaData]      = useState({})
@@ -175,9 +172,7 @@ export default function App() {
     guppyConfigs,
     rwbConfigs,
     squeezeConfigs,
-    verdictRules,
-    conditionParams,
-  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules, conditionParams])
+  }), [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs])
 
   // Save preferences to backend (fire-and-forget)
   const savePrefs = useCallback((data) => {
@@ -211,8 +206,6 @@ export default function App() {
           if (data.rwbConfigs)     setRwbConfigs(data.rwbConfigs)
           if (data.squeezeConfigs) setSqueezeConfigs(data.squeezeConfigs)
           if (data.activeListId != null) setActiveListId(data.activeListId)
-          if (data.verdictRules)     setVerdictRules(data.verdictRules)
-          if (data.conditionParams) setConditionParams(data.conditionParams)
         } else {
           // First time — seed backend with current localStorage values
           savePrefs({
@@ -234,7 +227,7 @@ export default function App() {
   useEffect(() => {
     if (!prefsLoaded.current) return
     scheduleSave(prefsSnapshot())
-  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, verdictRules, conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [theme, activeListId, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   useEffect(() => {
@@ -248,6 +241,17 @@ export default function App() {
       })
       .catch(() => setWatchlists([]))
       .finally(() => setWlLoading(false))
+  }, [])
+
+  // Load screen configs from backend on mount
+  useEffect(() => {
+    fetch('/api/screen-configs')
+      .then(r => r.json())
+      .then(configs => {
+        setScreenConfigs(configs)
+        if (configs.length > 0) setActiveConfigId(configs[0].id)
+      })
+      .catch(() => {})
   }, [])
 
   // ── Fetch chart data ──────────────────────────────────────────────────────
@@ -373,20 +377,39 @@ export default function App() {
     if (mainTab === 'dividends'  && symbol && dividendsSymbol  !== symbol) fetchDividends(symbol)
   }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Patch a single condition in the active screen config (backend + local state)
+  const patchCondition = useCallback((conditionName, settings) => {
+    if (activeConfigId == null) return
+    // Optimistic local update
+    setScreenConfigs(prev => prev.map(cfg =>
+      cfg.id !== activeConfigId ? cfg : {
+        ...cfg,
+        conditions: {
+          ...cfg.conditions,
+          [conditionName]: { ...(cfg.conditions[conditionName] ?? {}), ...settings },
+        },
+      }
+    ))
+    // Persist to backend
+    fetch(`/api/screen-configs/${activeConfigId}/conditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition_name: conditionName, settings }),
+    }).catch(() => {})
+  }, [activeConfigId])
+
   const handleToggleRule = useCallback((conditionName, defaultRole) => {
-    setVerdictRules(prev => {
-      const effective = prev[conditionName] !== undefined ? prev[conditionName] : defaultRole
-      const next = effective !== null ? null : (defaultRole !== null ? defaultRole : true)
-      return { ...prev, [conditionName]: next }
-    })
-  }, [])
+    // Find current effective role from active config
+    const config = screenConfigs.find(c => c.id === activeConfigId)
+    const cond   = config?.conditions?.[conditionName] ?? {}
+    const effective = 'verdict_role' in cond ? cond.verdict_role : defaultRole
+    const next = effective !== null ? null : (defaultRole !== null ? defaultRole : true)
+    patchCondition(conditionName, { verdict_role: next })
+  }, [screenConfigs, activeConfigId, patchCondition])
 
   const handleConditionParam = useCallback((conditionName, key, value) => {
-    setConditionParams(prev => ({
-      ...prev,
-      [conditionName]: { ...prev[conditionName], [key]: value },
-    }))
-  }, [])
+    patchCondition(conditionName, { [key]: value })
+  }, [patchCondition])
 
   const handleAnalysis = useCallback(async () => {
     const sym = symbol || input.trim().toUpperCase()
@@ -396,17 +419,8 @@ export default function App() {
     setAnalysisError(null)
     setAnalysisLoading(true)
     try {
-      const sqzP  = conditionParams.sqz_consecutive_positive_bars            ?? { threshold: 3, op: 'gt' }
-      const macdP = conditionParams.macd_histogram_consecutive_positive_bars ?? { threshold: 3, op: 'gt' }
-      const rwbP  = conditionParams.rwb_bars_since_fast_above_slow           ?? { threshold: 3, op: 'gt' }
-      const qs    = new URLSearchParams({
-        sqz_pos_bars_threshold:             sqzP.threshold,
-        sqz_pos_bars_op:                    sqzP.op,
-        macd_hist_pos_bars_threshold:       macdP.threshold,
-        macd_hist_pos_bars_op:              macdP.op,
-        rwb_fast_above_slow_bars_threshold: rwbP.threshold,
-        rwb_fast_above_slow_bars_op:        rwbP.op,
-      })
+      const qs = new URLSearchParams()
+      if (activeConfigId != null) qs.set('config_id', activeConfigId)
       const res = await fetch(`/api/stocks/${sym}/screen?${qs}`)
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -418,16 +432,17 @@ export default function App() {
     } finally {
       setAnalysisLoading(false)
     }
-  }, [symbol, input, conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [symbol, input, activeConfigId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-run analysis when condition params change while the modal is open
+  // Re-run analysis when the active config's conditions change while the modal is open
   const analysisOpenRef = useRef(false)
   analysisOpenRef.current = analysisOpen
+  const activeConditions = screenConfigs.find(c => c.id === activeConfigId)?.conditions
   useEffect(() => {
     if (!analysisOpenRef.current) return
     const t = setTimeout(() => handleAnalysis(), 400)
     return () => clearTimeout(t)
-  }, [conditionParams]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeConditions]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Range only zooms — no re-fetch
   const handleRange = (rng) => {
@@ -804,9 +819,8 @@ export default function App() {
           loading={analysisLoading}
           error={analysisError}
           data={analysisData}
-          verdictRules={verdictRules}
+          configConditions={screenConfigs.find(c => c.id === activeConfigId)?.conditions ?? {}}
           onToggleRule={handleToggleRule}
-          conditionParams={conditionParams}
           onConditionParam={handleConditionParam}
           onClose={() => setAnalysisOpen(false)}
         />
@@ -832,11 +846,13 @@ function SignSlope({ sign, slope, value }) {
   )
 }
 
-function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, conditionParams, onConditionParam, onClose }) {
-  // Compute effective role for each condition: user override takes precedence over backend default
+function AnalysisModal({ loading, error, data, configConditions, onToggleRule, onConditionParam, onClose }) {
+  // Effective role: config's verdict_role overrides the backend default stored in c.verdict_role.
+  // The backend already applied the config when computing c.verdict_role, so they match —
+  // but we read from configConditions directly so the UI is instant (no round-trip lag).
   const effectiveRole = (c) => {
-    const r = verdictRules?.[c.name]
-    return r !== undefined ? r : c.verdict_role
+    const cond = configConditions?.[c.name]
+    return (cond && 'verdict_role' in cond) ? cond.verdict_role : c.verdict_role
   }
   return (
     <div
@@ -1035,7 +1051,7 @@ function AnalysisModal({ loading, error, data, verdictRules, onToggleRule, condi
                           {c.description}
                         </span>
                         {(c.name === 'sqz_consecutive_positive_bars' || c.name === 'macd_histogram_consecutive_positive_bars' || c.name === 'rwb_bars_since_fast_above_slow') && (() => {
-                          const p = conditionParams?.[c.name] ?? { threshold: 3, op: 'gt' }
+                          const p = configConditions?.[c.name] ?? { threshold: 3, op: 'gt' }
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px' }}>
                               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Consecutive bars</span>
