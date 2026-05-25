@@ -68,6 +68,7 @@ class RWBAnalysis:
     bars_since_fast_above_slow:           int   # consecutive bars fast_width has been above slow_width (0 if currently not above)
     slow_width_consecutive_positive_bars: int   # consecutive bars slow_width value has been positive (0 if currently not positive)
     fast_width_consecutive_positive_bars: int   # consecutive bars fast_width value has been positive (0 if currently not positive)
+    slow_width_consecutive_rising_bars:   int   # consecutive bars slow_width has been rising (0 if current bar is not rising)
 
 
 @dataclass
@@ -159,6 +160,17 @@ def analyze_macd(
     )
 
 
+def _count_consecutive_rising(values: list[float]) -> int:
+    """Count how many consecutive bars (from the end) each value is greater than the one before it."""
+    count = 0
+    for i in range(len(values) - 1, 0, -1):
+        if values[i] > values[i - 1]:
+            count += 1
+        else:
+            break
+    return count
+
+
 def analyze_rwb(
     prices: Sequence[float],
     flat_threshold: float = 1e-10,
@@ -213,6 +225,7 @@ def analyze_rwb(
         bars_since_fast_above_slow=bars_since_cross,
         slow_width_consecutive_positive_bars=slow_width_pos_bars,
         fast_width_consecutive_positive_bars=fast_width_pos_bars,
+        slow_width_consecutive_rising_bars=_count_consecutive_rising(slow_vals),
     )
 
 

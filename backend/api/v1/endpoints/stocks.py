@@ -409,6 +409,7 @@ async def get_screen(
             "bars_since_fast_above_slow":            result.rwb.bars_since_fast_above_slow,
             "slow_width_consecutive_positive_bars":  result.rwb.slow_width_consecutive_positive_bars,
             "fast_width_consecutive_positive_bars":  result.rwb.fast_width_consecutive_positive_bars,
+            "slow_width_consecutive_rising_bars":    result.rwb.slow_width_consecutive_rising_bars,
         },
         "sqz": {
             "momentum":                  fmt_line(result.sqz.momentum),
