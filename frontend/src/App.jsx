@@ -192,25 +192,84 @@ export default function App() {
     saveTimer.current = setTimeout(() => savePrefs(data), 800)
   }, [savePrefs])
 
+  // Holds indicator configs found in old preferences (pre-chart-config migration)
+  const legacyIndicatorsRef = useRef(null)
+
   // Load preferences from backend on mount.
   // If backend has no preferences yet, seed it with the current localStorage values.
+  // Chart configs are loaded sequentially after preferences so the legacy migration
+  // (indicator data stored in old preferences → new chart config) is race-free.
   const prefsLoaded = useRef(false)
+  const chartConfigsLoaded = useRef(false)
   useEffect(() => {
+    let savedActiveChartConfigId = null
+
     fetch('/api/preferences')
       .then(r => r.json())
       .then(({ data }) => {
         if (data && Object.keys(data).length > 0) {
-          // Apply saved preferences
-          if (data.theme)          { setTheme(data.theme); document.documentElement.dataset.theme = data.theme }
+          if (data.theme) { setTheme(data.theme); document.documentElement.dataset.theme = data.theme }
           if (data.activeListId != null) setActiveListId(data.activeListId)
-          if (data.activeChartConfigId != null) setActiveChartConfigId(data.activeChartConfigId)
+          if (data.activeChartConfigId != null) {
+            setActiveChartConfigId(data.activeChartConfigId)
+            savedActiveChartConfigId = data.activeChartConfigId
+          }
+          // Capture legacy indicator configs for migration into the chart config system
+          const hasLegacy = data.maConfigs || data.macdConfigs || data.guppyConfigs ||
+                            data.rwbConfigs || data.squeezeConfigs
+          if (hasLegacy) {
+            legacyIndicatorsRef.current = {
+              maConfigs:      data.maConfigs      ?? [],
+              macdConfigs:    data.macdConfigs    ?? [],
+              guppyConfigs:   data.guppyConfigs   ?? [],
+              rwbConfigs:     data.rwbConfigs     ?? [],
+              squeezeConfigs: data.squeezeConfigs ?? [],
+            }
+          }
         } else {
           // First time — seed backend with current state
           savePrefs({ theme, activeListId, activeChartConfigId: null })
         }
         prefsLoaded.current = true
       })
-      .catch(() => { prefsLoaded.current = true })
+      // Load chart configs after prefs so legacyIndicatorsRef is already populated
+      .then(() => fetch('/api/chart-configs'))
+      .then(r => r.json())
+      .then(configs => {
+        setChartConfigs(configs)
+        if (configs.length === 0) return
+        // Restore the previously active config (or fall back to first)
+        const saved = configs.find(c => c.id === savedActiveChartConfigId) ?? configs[0]
+        setActiveChartConfigId(saved.id)
+
+        // Migrate: if the config's indicators are all empty and legacy data exists, use it
+        const ind = saved.indicators ?? {}
+        const isEmpty = !ind.maConfigs?.length && !ind.macdConfigs?.length &&
+                        !ind.guppyConfigs?.length && !ind.rwbConfigs?.length &&
+                        !ind.squeezeConfigs?.length
+        const legacy = legacyIndicatorsRef.current
+        if (isEmpty && legacy) {
+          applyChartConfig(legacy)
+          // Persist the migrated indicators into this chart config
+          fetch(`/api/chart-configs/${saved.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: saved.name, indicators: legacy }),
+          }).catch(() => {})
+          setChartConfigs(prev => prev.map(c =>
+            c.id !== saved.id ? c : { ...c, indicators: legacy }
+          ))
+          legacyIndicatorsRef.current = null  // only migrate once
+        } else {
+          applyChartConfig(saved.indicators)
+        }
+
+        chartConfigsLoaded.current = true
+      })
+      .catch(() => {
+        prefsLoaded.current = true
+        chartConfigsLoaded.current = true
+      })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist to backend whenever any preference changes (skip the initial mount)
@@ -243,23 +302,6 @@ export default function App() {
       })
       .catch(() => {})
   }, [])
-
-  // Load chart configs from backend on mount; apply the saved active config's indicators
-  const chartConfigsLoaded = useRef(false)
-  useEffect(() => {
-    fetch('/api/chart-configs')
-      .then(r => r.json())
-      .then(configs => {
-        setChartConfigs(configs)
-        if (configs.length === 0) return
-        // Restore the previously active config (or fall back to first)
-        const saved  = configs.find(c => c.id === activeChartConfigId) ?? configs[0]
-        setActiveChartConfigId(saved.id)
-        applyChartConfig(saved.indicators)
-        chartConfigsLoaded.current = true
-      })
-      .catch(() => { chartConfigsLoaded.current = true })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helper: push a config's indicators into the live indicator states
   function applyChartConfig(indicators) {
