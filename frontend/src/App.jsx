@@ -52,6 +52,24 @@ function priceChange(info) {
   return { diff, pct }
 }
 
+/**
+ * Returns true if a chart config's indicators object has been populated
+ * (i.e. it has at least one indicator series OR a non-default chart type).
+ * Freshly-seeded configs have all-empty arrays and chartType='candlestick',
+ * so they return false until the user configures them.
+ */
+function isConfigPopulated(ind) {
+  if (!ind) return false
+  return !!(
+    ind.maConfigs?.length      ||
+    ind.macdConfigs?.length    ||
+    ind.guppyConfigs?.length   ||
+    ind.rwbConfigs?.length     ||
+    ind.squeezeConfigs?.length ||
+    (ind.chartType && ind.chartType !== 'candlestick')
+  )
+}
+
 // ── Watchlist API ─────────────────────────────────────────────────────────────
 
 const wlApi = {
@@ -623,7 +641,13 @@ export default function App() {
     const cfg = chartConfigs.find(c => c.name === targetName)
     if (cfg && cfg.id !== activeChartConfigId) {
       setActiveChartConfigId(cfg.id)
-      applyChartConfig(cfg.indicators)
+      // Only apply the config when it has been configured at least once.
+      // If it is still empty (freshly seeded), keep the current indicators
+      // as-is — they will be auto-saved to this config by the debounce-save
+      // effect, so the config self-populates on the first visit.
+      if (isConfigPopulated(cfg.indicators)) {
+        applyChartConfig(cfg.indicators)
+      }
     }
   }
 
