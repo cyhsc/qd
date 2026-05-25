@@ -2,21 +2,28 @@ import { useRef, useState } from 'react'
 
 // ── SymbolRow ─────────────────────────────────────────────────────────────────
 
-function SymbolRow({ symbol, name, active, onClick, onDelete }) {
+function SymbolRow({ symbol, name, active, onClick, onDelete, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }) {
   const [hovered, setHovered] = useState(false)
   return (
     <div
+      draggable
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
       style={{
         display: 'flex', alignItems: 'center',
         padding: '7px 10px 7px 12px',
         borderLeft: `2px solid ${active ? 'var(--blue)' : 'transparent'}`,
+        borderTop: isDragOver ? '2px solid var(--blue)' : '2px solid transparent',
         background: active
           ? 'rgba(41,98,255,0.08)'
           : hovered ? 'var(--bg-raised)' : 'transparent',
-        cursor: 'pointer', transition: 'background 0.1s',
+        cursor: 'grab', transition: 'background 0.1s',
+        opacity: 1,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -71,11 +78,12 @@ export function Watchlist({
   loading = false,
   onSelectList,
   onCreateList,
-  onImportList,  // async (name, symbols[], onProgress) → void
+  onImportList,       // async (name, symbols[], onProgress) → void
   onDeleteList,
   onSelectSymbol,
   onDeleteSymbol,
-  onAddSymbol,   // async (listId, symbol) → { ok, error? }
+  onAddSymbol,        // async (listId, symbol) → { ok, error? }
+  onReorderSymbols,   // (listId, symbols[]) → void
 }) {
   const [addInput,      setAddInput]      = useState('')
   const [addError,      setAddError]      = useState(null)
@@ -86,6 +94,10 @@ export function Watchlist({
   // Import state
   const [importProgress, setImportProgress] = useState(null) // { done, total, failed } | null
   const fileInputRef = useRef(null)
+
+  // Drag-and-drop reorder state
+  const dragIndexRef  = useRef(null)  // index of the row being dragged
+  const [dragOverIndex, setDragOverIndex] = useState(null)
 
   const activeList = lists.find(l => l.id === activeListId)
 
@@ -283,14 +295,40 @@ export function Watchlist({
             Add symbols below
           </div>
         )}
-        {!loading && activeList?.symbols.map(({ symbol, name }) => (
+        {!loading && activeList?.symbols.map(({ symbol, name }, index) => (
           <SymbolRow
             key={symbol}
             symbol={symbol}
             name={name}
             active={symbol === activeSymbol}
+            isDragOver={dragOverIndex === index}
             onClick={() => onSelectSymbol(symbol)}
             onDelete={() => onDeleteSymbol(activeListId, symbol)}
+            onDragStart={(e) => {
+              dragIndexRef.current = index
+              e.dataTransfer.effectAllowed = 'move'
+            }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              if (dragOverIndex !== index) setDragOverIndex(index)
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              const from = dragIndexRef.current
+              const to   = index
+              if (from == null || from === to) return
+              const syms = activeList.symbols.map(s => s.symbol)
+              const reordered = [...syms]
+              reordered.splice(to, 0, reordered.splice(from, 1)[0])
+              onReorderSymbols(activeListId, reordered)
+              dragIndexRef.current = null
+              setDragOverIndex(null)
+            }}
+            onDragEnd={() => {
+              dragIndexRef.current = null
+              setDragOverIndex(null)
+            }}
           />
         ))}
       </div>

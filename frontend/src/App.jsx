@@ -56,6 +56,7 @@ const wlApi = {
   deleteList:    (id)            => fetch(`/api/watchlists/${id}`, { method: 'DELETE' }),
   addSymbol:     (id, sym, name) => fetch(`/api/watchlists/${id}/symbols`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbol: sym, name }) }),
   deleteSymbol:  (id, sym)       => fetch(`/api/watchlists/${id}/symbols/${sym}`, { method: 'DELETE' }),
+  reorderSymbols:(id, symbols)   => fetch(`/api/watchlists/${id}/symbols/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ symbols }) }),
 }
 
 function loadActiveListId() {
@@ -526,6 +527,18 @@ export default function App() {
     await wlApi.deleteSymbol(listId, sym)
   }, [symbol])
 
+  const handleReorderSymbols = useCallback((listId, symbols) => {
+    // Optimistic local update
+    setWatchlists(prev => prev.map(l =>
+      l.id !== listId ? l : {
+        ...l,
+        symbols: symbols.map(sym => l.symbols.find(s => s.symbol === sym)).filter(Boolean),
+      }
+    ))
+    // Persist to backend (fire-and-forget)
+    wlApi.reorderSymbols(listId, symbols).catch(() => {})
+  }, [])
+
   const handleCreateList = useCallback(async (name) => {
     const newList = await wlApi.createList(name)
     setWatchlists(prev => [...prev, newList])
@@ -595,6 +608,7 @@ export default function App() {
         onSelectSymbol={selectSymbol}
         onDeleteSymbol={handleDeleteSymbol}
         onAddSymbol={handleAddSymbol}
+        onReorderSymbols={handleReorderSymbols}
       />
 
       {/* ── Sidebar resize handle ── */}

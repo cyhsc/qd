@@ -20,6 +20,10 @@ class AddSymbolBody(BaseModel):
     name: str
 
 
+class ReorderBody(BaseModel):
+    symbols: list[str]   # symbols in the desired new order
+
+
 # ── Serialiser ────────────────────────────────────────────────────────────────
 
 def wl_dict(wl: Watchlist) -> dict:
@@ -84,6 +88,19 @@ async def add_symbol(list_id: int, body: AddSymbolBody, db: AsyncSession = Depen
     ))
     await db.commit()
     return {"symbol": body.symbol, "name": body.name}
+
+
+@router.put("/{list_id}/symbols/reorder", status_code=204)
+async def reorder_symbols(list_id: int, body: ReorderBody, db: AsyncSession = Depends(get_db)):
+    """Assign positions according to the order of symbols in the request body."""
+    rows = (await db.execute(
+        select(WatchlistSymbol).where(WatchlistSymbol.watchlist_id == list_id)
+    )).scalars().all()
+    index = {r.symbol: r for r in rows}
+    for pos, sym in enumerate(body.symbols):
+        if sym in index:
+            index[sym].position = pos
+    await db.commit()
 
 
 @router.delete("/{list_id}/symbols/{symbol}", status_code=204)
