@@ -69,6 +69,7 @@ class RWBAnalysis:
     slow_width_consecutive_positive_bars: int   # consecutive bars slow_width value has been positive (0 if currently not positive)
     fast_width_consecutive_positive_bars: int   # consecutive bars fast_width value has been positive (0 if currently not positive)
     slow_width_consecutive_rising_bars:   int   # consecutive bars slow_width has been rising (0 if current bar is not rising)
+    fast_width_consecutive_rising_bars:   int   # consecutive bars fast_width has been rising (0 if current bar is not rising)
 
 
 @dataclass
@@ -226,6 +227,7 @@ def analyze_rwb(
         slow_width_consecutive_positive_bars=slow_width_pos_bars,
         fast_width_consecutive_positive_bars=fast_width_pos_bars,
         slow_width_consecutive_rising_bars=_count_consecutive_rising(slow_vals),
+        fast_width_consecutive_rising_bars=_count_consecutive_rising(fast_vals),
     )
 
 
