@@ -249,6 +249,7 @@ export function StockChart({
   const mainSeriesRef  = useRef(null)   // active main series (type varies with chartType)
   const volumeRef      = useRef(null)
   const rawCandlesRef  = useRef([])     // original OHLCV candles (source for all types)
+  const rawVolumeRef   = useRef([])     // original volume data (restored when leaving renko/pnf)
   const candlesRef     = useRef([])     // alias kept for MA/MACD crosshair index lookup
   const chartTypeRef   = useRef(chartType)
   const lastBarRef     = useRef(null)
@@ -495,13 +496,17 @@ export function StockChart({
       const data = computeMainData(rawCandlesRef.current, chartType)
       series.setData(data)
 
-      // Hide volume bars for synthetic chart types (time axes differ)
       if (chartType === 'renko' || chartType === 'pnf') {
+        // Hide volume — time axes are synthetic and don't align with volume bars
         volumeRef.current?.setData([])
         const to   = data.length - 1 + RIGHT_BAR_PADDING
         const from = Math.max(0, to - 120 - RIGHT_BAR_PADDING)
         try { chart.timeScale().setVisibleLogicalRange({ from, to }) } catch { /* empty */ }
       } else {
+        // Restore volume data that was hidden while in renko/pnf
+        if (rawVolumeRef.current.length) {
+          volumeRef.current?.setData(rawVolumeRef.current)
+        }
         applyVisibleRange(chart, rawCandlesRef.current, visibleDaysRef.current)
       }
     }
@@ -529,6 +534,7 @@ export function StockChart({
     if (!chartRef.current || !mainSeriesRef.current || !candles?.length) return
     rawCandlesRef.current = candles
     candlesRef.current    = candles  // kept for MA/MACD crosshair index lookup
+    if (volume?.length) rawVolumeRef.current = volume  // persist for restoration after renko/pnf
 
     const type = chartTypeRef.current
     const data = computeMainData(candles, type)
