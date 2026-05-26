@@ -9,8 +9,11 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 import yfinance as yf
 
+import pandas as pd
+
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
 from core.screen import screen_individual
+from core.renko import compute_renko
 from db import CacheMeta, Price, ScreenConfig, get_db
 
 logger = logging.getLogger(__name__)
@@ -626,3 +629,78 @@ async def get_financials(symbol: str):
         "balance":  _build(data["balance_annual"],  data["balance_quarterly"],  include_ttm=False),
         "cashflow": _build(data["cashflow_annual"],  data["cashflow_quarterly"], include_ttm=True),
     }
+
+
+# ── Renko ─────────────────────────────────────────────────────────────────────
+
+@router.get("/{symbol}/renko")
+async def get_renko(
+    symbol:     str,
+    brick_size: float | None = Query(default=None, description="Fixed brick size; omit for ATR(14)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return Renko bricks for a symbol using daily (1d) price data.
+
+    Brick size defaults to ATR(14) of the available data.  Pass
+    ``brick_size`` to override (e.g. ``?brick_size=2.5``).
+
+    Prices are read from the local cache when available; otherwise 3 years of
+    daily data are fetched fresh from Yahoo Finance.
+    """
+    sym         = symbol.upper()
+    yf_interval = "1d"
+
+    # ── Try cache first ───────────────────────────────────────────────────────
+    rows = await read_cached_prices(db, sym, yf_interval)
+
+    if rows:
+        df = pd.DataFrame([{
+            'date':   pd.Timestamp(r.ts),
+            'open':   r.open,
+            'high':   r.high,
+            'low':    r.low,
+            'close':  r.close,
+            'volume': r.volume,
+        } for r in rows]).reset_index(drop=True)
+    else:
+        # ── No cache — fetch from yfinance ────────────────────────────────────
+        logger.info("Renko: no cached prices for %s — fetching from yfinance", sym)
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            return yf.Ticker(sym).history(period="3y", interval="1d", auto_adjust=False)
+
+        try:
+            hist = await asyncio.wait_for(
+                loop.run_in_executor(None, _fetch),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=408, detail=f"Timed out fetching data for '{sym}'")
+
+        if hist.empty:
+            raise HTTPException(status_code=404, detail=f"No price data found for '{sym}'")
+
+        hist = hist.reset_index()
+        hist.columns = [c.lower() for c in hist.columns]
+        df = hist[['date', 'open', 'high', 'low', 'close', 'volume']].copy()
+        df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
+        df = df.reset_index(drop=True)
+
+    # ── Compute bricks ────────────────────────────────────────────────────────
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: compute_renko(df, brick_size)),
+            timeout=15.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail="Renko computation timed out")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Renko computation failed for %s", sym)
+        raise HTTPException(status_code=500, detail=f"Renko computation failed: {exc}")
+
+    return {"symbol": sym, **result}

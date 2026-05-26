@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { StockChart }     from './components/StockChart'
-import { Watchlist }      from './components/Watchlist'
+import { StockChart }   from './components/StockChart'
+import { RenkoChart }   from './components/RenkoChart'
+import { Watchlist }    from './components/Watchlist'
 import { IndicatorPanel } from './components/IndicatorPanel'
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -998,8 +999,8 @@ export default function App() {
         {/* ── Chart area ── */}
         <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
           {!symbol && !loading && <Placeholder text="Select a symbol or search above" />}
-          {loading && <Placeholder text="Loading…" />}
-          {error && !loading && (
+          {loading && chartType !== 'renko' && <Placeholder text="Loading…" />}
+          {error && !loading && chartType !== 'renko' && (
             <div style={{
               position: 'absolute', inset: 0,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1013,7 +1014,7 @@ export default function App() {
               </div>
             </div>
           )}
-          {candles && !loading && (
+          {candles && !loading && chartType !== 'renko' && (
             <StockChart
               candles={candles}    volume={volume}
               chartType={chartType}
@@ -1025,6 +1026,9 @@ export default function App() {
               rwbConfigs={rwbConfigs}         rwbData={rwbData}
               squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
             />
+          )}
+          {symbol && chartType === 'renko' && (
+            <RenkoChart symbol={symbol} theme={theme} />
           )}
         </main>
 
@@ -1455,6 +1459,7 @@ const CHART_TYPE_OPTIONS = [
   { value: 'candlestick', label: 'Candles' },
   { value: 'bars',        label: 'Bars'    },
   { value: 'line',        label: 'Line'    },
+  { value: 'renko',       label: 'Renko'   },
 ]
 
 function ChartTypeSelector({ value, onChange }) {
