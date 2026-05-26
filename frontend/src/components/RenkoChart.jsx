@@ -41,6 +41,7 @@ export function RenkoChart({ symbol, theme = 'light' }) {
   const viewRef        = useRef({ offset: 0, zoom: 80 })
   const themeRef       = useRef(theme)
   const hoverIdxRef    = useRef(null)   // global brick index currently hovered
+  const mousePosRef    = useRef(null)   // { x, y } in CSS pixels relative to canvas
   const drawRef        = useRef(null)   // always points to the latest draw()
   const isDraggingRef  = useRef(false)
   const dragStartRef   = useRef({ x: 0, offset: 0 })
@@ -89,7 +90,8 @@ export function RenkoChart({ symbol, theme = 'light' }) {
     const hi    = maxP + pad
     const range = hi - lo
 
-    const bW  = plotW / count
+    const RIGHT_BRICK_PAD = 5
+    const bW  = plotW / (zoom + RIGHT_BRICK_PAD)   // constant width regardless of how many bricks are visible
     const bH  = plotH * brick_size / range
 
     const toX = i => i * bW
@@ -149,12 +151,49 @@ export function RenkoChart({ symbol, theme = 'light' }) {
     for (let i = 0; i < count; i += labelStep) {
       const b = visible[i]
       if (!b) continue
-      ctx.fillText(b.date.slice(5), toX(i) + bW / 2, H - 6)  // MM-DD
+      // Format: MM-DD-YYYY
+      const [yyyy, mm, dd] = b.date.split('-')
+      const label = `${mm}-${dd}-${yyyy}`
+      ctx.fillText(label, toX(i) + bW / 2, H - 6)
+    }
+
+    // ── Crosshair ─────────────────────────────────────────────────────────────
+    const hiIdx2  = hoverIdxRef.current
+    const mousePos = mousePosRef.current
+    if (hiIdx2 != null && mousePos) {
+      const localI = hiIdx2 - start
+      const cx     = Math.round(toX(localI) + bW / 2) + 0.5
+      const my     = mousePos.y
+
+      ctx.save()
+      ctx.setLineDash([4, 4])
+      ctx.strokeStyle = t.label
+      ctx.lineWidth   = 1
+      ctx.globalAlpha = 0.6
+
+      // Vertical line
+      ctx.beginPath(); ctx.moveTo(cx, PAD_TOP); ctx.lineTo(cx, H - PAD_BOT); ctx.stroke()
+      // Horizontal line
+      ctx.beginPath(); ctx.moveTo(0, my); ctx.lineTo(plotW, my); ctx.stroke()
+
+      ctx.restore()
+
+      // Price label on right axis
+      const hoverPrice = lo + range * (1 - (my - PAD_TOP) / plotH)
+      const labelH     = 14
+      const labelY     = Math.max(PAD_TOP + labelH / 2, Math.min(H - PAD_BOT - labelH / 2, my))
+      ctx.fillStyle = themeRef.current === 'dark' ? '#4b5563' : '#e5e7eb'
+      ctx.fillRect(plotW + 1, labelY - labelH / 2, PAD_RIGHT - 2, labelH)
+      ctx.fillStyle = themeRef.current === 'dark' ? '#d1d5db' : '#1f2937'
+      ctx.font      = `10px var(--font-mono, 'Courier New', monospace)`
+      ctx.textAlign = 'left'
+      ctx.fillText(fmtPrice(hoverPrice), plotW + 5, labelY + 3.5)
     }
 
     // ── Brick-size watermark ──────────────────────────────────────────────────
     ctx.fillStyle = t.dim
     ctx.textAlign = 'right'
+    ctx.font      = `10px var(--font-mono, 'Courier New', monospace)`
     ctx.fillText(`brick ${fmtPrice(brick_size)}`, plotW - 4, H - 6)
   }
 
@@ -208,7 +247,8 @@ export function RenkoChart({ symbol, theme = 'light' }) {
     const count  = Math.min(zoom, bricks.length - offset)
     const plotW  = rect.width - PAD_RIGHT
     if (x < 0 || x > plotW || count === 0) return null
-    const i = Math.floor(x / (plotW / count))
+    const bW = plotW / (zoom + 5)   // must match draw()
+    const i  = Math.floor(x / bW)
     return i >= 0 && i < count ? { localIdx: i, globalIdx: offset + i } : null
   }
 
@@ -222,8 +262,8 @@ export function RenkoChart({ symbol, theme = 'light' }) {
     const n       = data.bricks.length
     const factor  = e.deltaY > 0 ? 1.15 : 1 / 1.15
     const newZoom = Math.round(Math.max(5, Math.min(n, zoom * factor)))
-    // Keep the rightmost brick pinned while zooming
-    const newOffset = Math.max(0, Math.min(n - newZoom, offset + Math.round((zoom - newZoom) / 2)))
+    // Keep the rightmost visible brick pinned while zooming
+    const newOffset = Math.max(0, Math.min(n - 1, offset + Math.round((zoom - newZoom) / 2)))
     viewRef.current = { offset: newOffset, zoom: newZoom }
     drawRef.current?.()
   }
@@ -241,18 +281,19 @@ export function RenkoChart({ symbol, theme = 'light' }) {
 
     // Pan while dragging
     if (isDraggingRef.current) {
+      mousePosRef.current = null
       const canvas = canvasRef.current
       if (!canvas) return
       const rect    = canvas.getBoundingClientRect()
       const { bricks } = data
       const { zoom }   = viewRef.current
       const plotW   = rect.width - PAD_RIGHT
-      const bW      = plotW / zoom
+      const bW      = plotW / (zoom + 5)   // must match draw()
       const dx      = e.clientX - dragStartRef.current.x
       const dBricks = -Math.round(dx / bW)
       const newOffset = Math.max(
         0,
-        Math.min(bricks.length - zoom, dragStartRef.current.offset + dBricks),
+        Math.min(bricks.length - 1, dragStartRef.current.offset + dBricks),
       )
       if (newOffset !== viewRef.current.offset) {
         viewRef.current = { ...viewRef.current, offset: newOffset }
@@ -261,18 +302,24 @@ export function RenkoChart({ symbol, theme = 'light' }) {
       return
     }
 
-    // Hover highlight
+    // Hover highlight + crosshair
+    const canvas = canvasRef.current
+    const rect   = canvas ? canvas.getBoundingClientRect() : null
+    const mouseY = rect ? e.clientY - rect.top : null
+
     const hit = brickAtX(e.clientX)
     if (!hit) {
-      if (hoverIdxRef.current != null) {
-        hoverIdxRef.current = null
-        setHover(null)
-        drawRef.current?.()
-      }
+      const changed = hoverIdxRef.current != null
+      hoverIdxRef.current = null
+      mousePosRef.current = null
+      if (changed) { setHover(null); drawRef.current?.() }
       return
     }
     const { globalIdx } = hit
-    if (hoverIdxRef.current !== globalIdx) {
+    const newPos = mouseY != null ? { x: e.clientX - (rect?.left ?? 0), y: mouseY } : mousePosRef.current
+    const posChanged = !mousePosRef.current || mousePosRef.current.y !== newPos?.y
+    mousePosRef.current = newPos
+    if (hoverIdxRef.current !== globalIdx || posChanged) {
       hoverIdxRef.current = globalIdx
       setHover(data.bricks[globalIdx])
       drawRef.current?.()
@@ -285,8 +332,9 @@ export function RenkoChart({ symbol, theme = 'light' }) {
 
   function handleMouseLeave() {
     isDraggingRef.current = false
-    if (hoverIdxRef.current != null) {
+    if (hoverIdxRef.current != null || mousePosRef.current != null) {
       hoverIdxRef.current = null
+      mousePosRef.current = null
       setHover(null)
       drawRef.current?.()
     }
