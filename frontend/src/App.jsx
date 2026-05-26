@@ -1452,11 +1452,9 @@ function ChartConfigSelector({ configs, activeId, onSelect, onCreate, onDelete }
 // ── Chart type selector ───────────────────────────────────────────────────────
 
 const CHART_TYPE_OPTIONS = [
-  { value: 'candlestick', label: 'Candles'  },
-  { value: 'bars',        label: 'Bars'     },
-  { value: 'line',        label: 'Line'     },
-  { value: 'renko',       label: 'Renko'    },
-  { value: 'pnf',         label: 'P&F'      },
+  { value: 'candlestick', label: 'Candles' },
+  { value: 'bars',        label: 'Bars'    },
+  { value: 'line',        label: 'Line'    },
 ]
 
 function ChartTypeSelector({ value, onChange }) {

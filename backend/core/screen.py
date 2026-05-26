@@ -9,6 +9,7 @@ Fetches 3 years of daily OHLC data from Yahoo Finance and evaluates a set of
 trend/momentum conditions using MACD, RWB, and SQZ analysis.
 """
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -378,3 +379,125 @@ def screen_individual(
     logger.info("%-6s  %s  score=%d/%d  failing=%s",
                 sym, "PASS" if verdict else "FAIL", score, len(conditions), failing or "none")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Batch screener
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScreenBatchResult:
+    """Summary of a multi-symbol screening run."""
+    passed:  list[str]                     # symbols whose verdict is True, original order
+    failed:  list[str]                     # symbols whose verdict is False, original order
+    errored: dict[str, str]                # symbol → error message (no price data, etc.)
+    results: dict[str, ScreenResult]       # symbol → full ScreenResult (only for screened symbols)
+
+
+def screen_symbols(
+    symbols: list[str],
+    condition_overrides: dict | None = None,
+    max_workers: int = 1,
+) -> list[str]:
+    """
+    Screen a list of symbols and return those that pass the analysis.
+
+    Each symbol is screened by :func:`screen_individual`.  All symbols are
+    processed concurrently (``max_workers`` threads) because the yfinance
+    fetch is I/O-bound.  Symbols that raise an error (no price data, network
+    timeout, etc.) are skipped and logged as warnings — they are **not**
+    included in the returned list.
+
+    Parameters
+    ----------
+    symbols:
+        Ticker symbols to screen.  Case-insensitive.
+    condition_overrides:
+        Passed unchanged to :func:`screen_individual` for every symbol.
+        Use this to supply the conditions dict from a :class:`ScreenConfig`.
+    max_workers:
+        Maximum number of concurrent threads.  Tune downward if yfinance
+        rate-limits you on very large lists.
+
+    Returns
+    -------
+    list[str]
+        Upper-cased symbols that passed all required verdict conditions,
+        in the same relative order they appeared in ``symbols``.
+
+    Example
+    -------
+    >>> passing = screen_symbols(["AAPL", "MSFT", "TSLA"], condition_overrides=cfg.conditions)
+    >>> print(passing)
+    ['AAPL', 'MSFT']
+    """
+    batch = screen_symbols_detailed(symbols, condition_overrides, max_workers)
+    return batch.passed
+
+
+def screen_symbols_detailed(
+    symbols: list[str],
+    condition_overrides: dict | None = None,
+    max_workers: int = 1,
+) -> ScreenBatchResult:
+    """
+    Screen a list of symbols and return a full :class:`ScreenBatchResult`.
+
+    Identical to :func:`screen_symbols` but exposes the per-symbol
+    :class:`ScreenResult` objects, the list of symbols that failed the
+    verdict, and any symbols that could not be screened due to errors.
+
+    Parameters
+    ----------
+    symbols:
+        Ticker symbols to screen.  Case-insensitive.
+    condition_overrides:
+        Passed unchanged to :func:`screen_individual` for every symbol.
+    max_workers:
+        Maximum number of concurrent threads.
+
+    Returns
+    -------
+    ScreenBatchResult
+        ``.passed``  – symbols whose verdict is ``True`` (original order)
+        ``.failed``  – symbols whose verdict is ``False`` (original order)
+        ``.errored`` – symbol → error message for symbols that raised
+        ``.results`` – symbol → :class:`ScreenResult` for all screened symbols
+    """
+    deduped  = list(dict.fromkeys(s.upper().strip() for s in symbols))
+    total    = len(deduped)
+    logger.info("Batch screening %d symbol(s) with %d workers …", total, max_workers)
+
+    results_map: dict[str, ScreenResult] = {}
+    errors_map:  dict[str, str]          = {}
+
+    def _screen_one(sym: str):
+        try:
+            return sym, screen_individual(sym, condition_overrides), None
+        except Exception as exc:       # noqa: BLE001
+            return sym, None, str(exc)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_screen_one, sym): sym for sym in deduped}
+        for future in as_completed(futures):
+            sym, result, err = future.result()
+            if err is not None:
+                logger.warning("%-6s  ERROR  %s", sym, err)
+                errors_map[sym] = err
+            else:
+                results_map[sym] = result
+
+    # Reconstruct in original order
+    passed  = [s for s in deduped if s in results_map and results_map[s].verdict]
+    failed  = [s for s in deduped if s in results_map and not results_map[s].verdict]
+
+    logger.info(
+        "Batch complete — %d passed / %d failed / %d errored (total %d)",
+        len(passed), len(failed), len(errors_map), total,
+    )
+    return ScreenBatchResult(
+        passed=passed,
+        failed=failed,
+        errored=errors_map,
+        results=results_map,
+    )

@@ -119,118 +119,18 @@ function applyVisibleRange(chart, candles, visibleDays) {
 
 // ── Alternative chart-type utilities ─────────────────────────────────────────
 
-/** Average True Range over the last `period` bars */
-function calcATR(candles, period = 14) {
-  if (candles.length < 2) return (candles[0]?.close ?? 1) * 0.01
-  const trs = []
-  for (let i = 1; i < candles.length; i++) {
-    const c = candles[i], pc = candles[i - 1].close
-    trs.push(Math.max(c.high - c.low, Math.abs(c.high - pc), Math.abs(c.low - pc)))
-  }
-  const n = Math.min(period, trs.length)
-  return trs.slice(-n).reduce((a, b) => a + b, 0) / n
-}
-
-/** Convert a lightweight-charts time value (date string or unix secs) → unix seconds */
-function toSecs(t) {
-  if (typeof t === 'number') return t
-  return Math.floor(new Date(t + 'T00:00:00Z').getTime() / 1000)
-}
-
-/**
- * Build Renko bricks from raw OHLCV candles.
- * Brick size = ATR(14), clamped to 0.3 % of price.
- * Each brick gets a monotonically increasing unix-second timestamp derived
- * from its source candle so the time axis shows real (approximate) dates.
- */
-function buildRenko(candles) {
-  if (!candles.length) return []
-  const atr = calcATR(candles, 14)
-  const brickSize = Math.max(atr, candles[0].close * 0.003)
-  const bricks = []
-  let base    = Math.floor(candles[0].close / brickSize) * brickSize
-  let lastT   = toSecs(candles[0].time) - 1
-
-  for (const bar of candles) {
-    let t = Math.max(toSecs(bar.time), lastT + 1)
-    const c = bar.close
-    while (c >= base + brickSize) {
-      bricks.push({ time: t, open: base, high: base + brickSize, low: base,              close: base + brickSize })
-      base += brickSize; lastT = t; t++
-    }
-    while (c <= base - brickSize) {
-      bricks.push({ time: t, open: base, high: base,              low: base - brickSize, close: base - brickSize })
-      base -= brickSize; lastT = t; t++
-    }
-    lastT = Math.max(lastT, t - 1)
-  }
-  return bricks
-}
-
-/**
- * Build a simplified Point & Figure chart.
- * Box size = ATR(14) / 2, 3-box reversal.
- * Returns one bar per column; X columns are "up" bars, O columns "down".
- * Sequential integers are used as time so the x-axis acts as a column index.
- */
-function buildPnF(candles) {
-  if (candles.length < 5) return []
-  const atr     = calcATR(candles, 14)
-  const boxSize = Math.max(atr * 0.5, candles[0].close * 0.01)
-  const REV     = 3
-  const dn = (p) => Math.floor(p / boxSize) * boxSize
-  const up = (p) => Math.ceil(p  / boxSize) * boxSize
-
-  let dir = null, cHigh = dn(candles[0].close) + boxSize, cLow = dn(candles[0].close)
-  const cols = []
-
-  for (let i = 1; i < candles.length; i++) {
-    const { high, low } = candles[i]
-
-    if (dir === null) {
-      if (dn(high) >= cHigh + boxSize) { dir = 'X'; cHigh = dn(high) }
-      else if (up(low) <= cLow - boxSize) { dir = 'O'; cLow = up(low) }
-      continue
-    }
-
-    if (dir === 'X') {
-      if (dn(high) > cHigh) cHigh = dn(high)
-      if (low <= cHigh - REV * boxSize) {
-        cols.push({ dir: 'X', high: cHigh, low: cLow })
-        dir = 'O'; cHigh = cHigh - boxSize; cLow = Math.min(up(low), cHigh - boxSize)
-      }
-    } else {
-      if (up(low) < cLow) cLow = up(low)
-      if (high >= cLow + REV * boxSize) {
-        cols.push({ dir: 'O', high: cHigh, low: cLow })
-        dir = 'X'; cLow = cLow + boxSize; cHigh = Math.max(dn(high), cLow + boxSize)
-      }
-    }
-  }
-  if (dir) cols.push({ dir, high: cHigh, low: cLow })
-
-  return cols.map((col, i) => ({
-    time:  i,
-    open:  col.dir === 'X' ? col.low  : col.high,
-    close: col.dir === 'X' ? col.high : col.low,
-    high:  col.high,
-    low:   col.low,
-  }))
-}
-
 /** Compute main series data from raw candles for the given chart type */
 function computeMainData(candles, type) {
-  if (type === 'line')  return candles.map(c => ({ time: c.time, value: c.close }))
-  if (type === 'renko') return buildRenko(candles)
-  if (type === 'pnf')   return buildPnF(candles)
+  if (type === 'line') return candles.map(c => ({ time: c.time, value: c.close }))
   return candles  // 'candlestick' and 'bars' use OHLCV directly
 }
+
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function StockChart({
   candles, volume,
-  chartType      = 'candlestick',  // 'candlestick' | 'bars' | 'line' | 'renko' | 'pnf'
+  chartType      = 'candlestick',  // 'candlestick' | 'bars' | 'line'
   visibleDays    = Infinity,
   theme          = 'light',
   maConfigs      = [],
@@ -248,8 +148,8 @@ export function StockChart({
   const chartRef       = useRef(null)
   const mainSeriesRef  = useRef(null)   // active main series (type varies with chartType)
   const volumeRef      = useRef(null)
-  const rawCandlesRef  = useRef([])     // original OHLCV candles (source for all types)
-  const rawVolumeRef   = useRef([])     // original volume data (restored when leaving renko/pnf)
+  const rawCandlesRef  = useRef([])     // last-received OHLCV candles
+  const rawVolumeRef   = useRef([])     // last-received volume data
   const candlesRef     = useRef([])     // alias kept for MA/MACD crosshair index lookup
   const chartTypeRef   = useRef(chartType)
   const lastBarRef     = useRef(null)
@@ -390,29 +290,23 @@ export function StockChart({
           hoverData = { open: null, high: null, low: null, close: pt.value,
                         volume: vol?.value ?? null, change: null, changePct: null }
         } else {
-          // For candlestick/bars, compute change vs. prior raw candle.
-          // For renko/pnf the logical index doesn't map to raw candles, so skip.
+          // candlestick / bars — compute change vs. prior candle
           let change = null, changePct = null
-          if (type !== 'renko' && type !== 'pnf') {
-            const idx       = param.logical
-            const prevClose = idx > 0 ? candlesRef.current[idx - 1]?.close ?? null : null
-            if (prevClose != null) {
-              change    = pt.close - prevClose
-              changePct = (change / prevClose) * 100
-            }
+          const idx       = param.logical
+          const prevClose = idx > 0 ? candlesRef.current[idx - 1]?.close ?? null : null
+          if (prevClose != null) {
+            change    = pt.close - prevClose
+            changePct = (change / prevClose) * 100
           }
           hoverData = { open: pt.open, high: pt.high, low: pt.low, close: pt.close,
                         volume: vol?.value ?? null, change, changePct }
         }
         setHover(hoverData)
 
-        // MACD legend — only meaningful for time-series types
-        if (type !== 'renko' && type !== 'pnf') {
-          const macdVals = {}
-          for (const [id, byTime] of Object.entries(macdByTimeRef.current))
-            macdVals[id] = byTime.get(pt.time ?? pt.value) ?? macdLastRef.current[id] ?? null
-          setMacdLegend(macdVals)
-        }
+        const macdVals = {}
+        for (const [id, byTime] of Object.entries(macdByTimeRef.current))
+          macdVals[id] = byTime.get(pt.time ?? pt.value) ?? macdLastRef.current[id] ?? null
+        setMacdLegend(macdVals)
       }
       const maVals = {}
       for (const [id, series] of maSeriesMap.current) {
@@ -473,7 +367,6 @@ export function StockChart({
         priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
       })
     } else {
-      // candlestick, renko, pnf — all rendered as candlesticks
       series = chart.addCandlestickSeries({
         upColor: '#26a69a', downColor: '#ef5350',
         borderVisible: false,
@@ -482,33 +375,12 @@ export function StockChart({
     }
     mainSeriesRef.current = series
 
-    // P&F: replace time-axis labels with column indices; restore for other types
-    if (chartType === 'pnf') {
-      chart.timeScale().applyOptions({
-        tickMarkFormatter: (_time, _type, _locale) => '',
-      })
-    } else {
-      chart.timeScale().applyOptions({ tickMarkFormatter: undefined })
-    }
-
     // Re-apply any candle data already loaded
     if (rawCandlesRef.current.length) {
       const data = computeMainData(rawCandlesRef.current, chartType)
       series.setData(data)
-
-      if (chartType === 'renko' || chartType === 'pnf') {
-        // Hide volume — time axes are synthetic and don't align with volume bars
-        volumeRef.current?.setData([])
-        const to   = data.length - 1 + RIGHT_BAR_PADDING
-        const from = Math.max(0, to - 120 - RIGHT_BAR_PADDING)
-        try { chart.timeScale().setVisibleLogicalRange({ from, to }) } catch { /* empty */ }
-      } else {
-        // Restore volume data that was hidden while in renko/pnf
-        if (rawVolumeRef.current.length) {
-          volumeRef.current?.setData(rawVolumeRef.current)
-        }
-        applyVisibleRange(chart, rawCandlesRef.current, visibleDaysRef.current)
-      }
+      if (rawVolumeRef.current.length) volumeRef.current?.setData(rawVolumeRef.current)
+      applyVisibleRange(chart, rawCandlesRef.current, visibleDaysRef.current)
     }
   }, [chartType]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -534,28 +406,15 @@ export function StockChart({
     if (!chartRef.current || !mainSeriesRef.current || !candles?.length) return
     rawCandlesRef.current = candles
     candlesRef.current    = candles  // kept for MA/MACD crosshair index lookup
-    if (volume?.length) rawVolumeRef.current = volume  // persist for restoration after renko/pnf
+    if (volume?.length) rawVolumeRef.current = volume
 
     const type = chartTypeRef.current
     const data = computeMainData(candles, type)
     mainSeriesRef.current.setData(data)
 
-    // Volume: hide for synthetic chart types (time axes don't align)
-    if (volumeRef.current) {
-      if (type === 'renko' || type === 'pnf') {
-        volumeRef.current.setData([])
-      } else if (volume?.length) {
-        volumeRef.current.setData(volume)
-      }
-    }
+    if (volumeRef.current && volume?.length) volumeRef.current.setData(volume)
 
-    if (type === 'renko' || type === 'pnf') {
-      const to   = data.length - 1 + RIGHT_BAR_PADDING
-      const from = Math.max(0, to - 120 - RIGHT_BAR_PADDING)
-      try { chartRef.current.timeScale().setVisibleLogicalRange({ from, to }) } catch { /* empty */ }
-    } else {
-      applyVisibleRange(chartRef.current, candles, visibleDaysRef.current)
-    }
+    applyVisibleRange(chartRef.current, candles, visibleDaysRef.current)
 
     const last      = candles[candles.length - 1]
     const prev      = candles[candles.length - 2] ?? null
