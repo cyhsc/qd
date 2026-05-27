@@ -178,6 +178,22 @@ export function RenkoChart({ symbol, theme = 'light' }) {
 
       ctx.restore()
 
+      // Date label at bottom of vertical crosshair
+      const hovBrick = data.bricks[hiIdx2]
+      if (hovBrick) {
+        const [yyyy, mm, dd] = hovBrick.date.split('-')
+        const dateLabel  = `${mm}-${dd}-${yyyy}`
+        ctx.font         = `10px var(--font-mono, 'Courier New', monospace)`
+        const textW      = ctx.measureText(dateLabel).width
+        const dlabelW    = textW + 10
+        const dlabelX    = Math.max(0, Math.min(plotW - dlabelW, cx - dlabelW / 2))
+        ctx.fillStyle    = themeRef.current === 'dark' ? '#4b5563' : '#e5e7eb'
+        ctx.fillRect(dlabelX, H - PAD_BOT, dlabelW, PAD_BOT - 1)
+        ctx.fillStyle    = themeRef.current === 'dark' ? '#d1d5db' : '#1f2937'
+        ctx.textAlign    = 'center'
+        ctx.fillText(dateLabel, dlabelX + dlabelW / 2, H - 6)
+      }
+
       // Price label on right axis
       const hoverPrice = lo + range * (1 - (my - PAD_TOP) / plotH)
       const labelH     = 14
