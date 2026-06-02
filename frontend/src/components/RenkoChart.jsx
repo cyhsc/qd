@@ -206,11 +206,16 @@ export function RenkoChart({ symbol, theme = 'light' }) {
       ctx.fillText(fmtPrice(hoverPrice), plotW + 5, labelY + 3.5)
     }
 
-    // ── Brick-size watermark ──────────────────────────────────────────────────
-    ctx.fillStyle = t.dim
-    ctx.textAlign = 'right'
-    ctx.font      = `10px var(--font-mono, 'Courier New', monospace)`
-    ctx.fillText(`brick ${fmtPrice(brick_size)}`, plotW - 4, H - 6)
+    // ── Brick-size label (top-left, below OHLCV overlay) ─────────────────────
+    ctx.font      = `14px var(--font-mono, 'Courier New', monospace)`
+    ctx.textAlign = 'left'
+    const bsLabel = `BRICK  ${fmtPrice(brick_size)}`
+    const bsW     = ctx.measureText(bsLabel).width + 14
+    const bsTop   = 38   // leaves room for the ~28px-tall OHLCV overlay
+    ctx.fillStyle = themeRef.current === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'
+    ctx.fillRect(4, bsTop, bsW, 22)
+    ctx.fillStyle = themeRef.current === 'dark' ? '#d1d5db' : '#374151'
+    ctx.fillText(bsLabel, 11, bsTop + 15)
   }
 
   // Always keep drawRef pointing to the latest draw closure (captures themeRef etc.)
