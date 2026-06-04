@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { StockChart }   from './components/StockChart'
-import { RenkoChart }   from './components/RenkoChart'
-import { Watchlist }    from './components/Watchlist'
+import { StockChart }    from './components/StockChart'
+import { RenkoChart }    from './components/RenkoChart'
+import { Watchlist }     from './components/Watchlist'
 import { IndicatorPanel } from './components/IndicatorPanel'
+import { ScreenerPanel } from './components/ScreenerPanel'
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -150,6 +151,7 @@ export default function App() {
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
 
+  const [topView,  setTopView]  = useState('chart')  // 'chart' | 'screener'
   const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview' | 'financials' | 'dividends'
   const [financialsData,    setFinancialsData]    = useState(null)
   const [financialsLoading, setFinancialsLoading] = useState(false)
@@ -761,279 +763,315 @@ export default function App() {
   const change = priceChange(info)
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
-      {/* ── Watchlist sidebar ── */}
-      <Watchlist
-        width={sidebarWidth}
-        lists={watchlists}
-        activeListId={activeListId}
-        activeSymbol={symbol}
-        loading={wlLoading}
-        onSelectList={setActiveListId}
-        onCreateList={handleCreateList}
-        onImportList={handleImportList}
-        onDeleteList={handleDeleteList}
-        onSelectSymbol={selectSymbol}
-        onDeleteSymbol={handleDeleteSymbol}
-        onAddSymbol={handleAddSymbol}
-        onReorderSymbols={handleReorderSymbols}
-      />
+      {/* ── Top nav bar: logo · tabs · theme ── */}
+      <div style={{
+        height: '40px', flexShrink: 0,
+        background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)',
+        display: 'flex', alignItems: 'center', padding: '0 16px', gap: '8px',
+      }}>
+        <span style={{ fontWeight: 700, fontSize: '15px', letterSpacing: '0.04em', marginRight: '8px' }}>QD</span>
 
-      {/* ── Sidebar resize handle ── */}
-      <div
-        ref={sidebarDragRef}
-        onMouseDown={handleSidebarMouseDown}
-        style={{
-          width: '4px', flexShrink: 0, cursor: 'col-resize',
-          background: 'var(--border)',
-          transition: 'background 0.15s',
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = 'var(--blue)'}
-        onMouseLeave={e => e.currentTarget.style.background = 'var(--border)'}
-      />
-
-      {/* ── Main content ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-
-        {/* ── Header: logo + search ── */}
-        <header style={{
-          height: '48px', flexShrink: 0,
-          background: 'var(--bg-panel)',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center',
-          padding: '0 20px', gap: '16px',
-        }}>
-          <span style={{ fontWeight: 700, fontSize: '15px', letterSpacing: '0.04em' }}>QD</span>
-
-          <form onSubmit={handleSearch} style={{ display: 'flex', gap: '6px' }}>
-            <input
-              ref={symbolInputRef}
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder="Symbol — e.g. AAPL, TSLA"
-              style={{
-                width: '220px', height: '32px',
-                background: 'var(--bg-raised)', border: '1px solid var(--border)',
-                borderRadius: '6px', padding: '0 10px',
-                color: 'var(--text-primary)', fontSize: '13px', outline: 'none',
-              }}
-            />
-            <button type="submit" style={{
-              height: '32px', padding: '0 14px',
-              background: 'var(--blue)', border: 'none',
-              borderRadius: '6px', color: '#fff', fontSize: '12px', fontWeight: 600,
-            }}>
-              Go
-            </button>
-          </form>
-
+        {/* Top-level tabs */}
+        {[
+          { id: 'market',   label: 'Market'   },
+          { id: 'chart',    label: 'Chart'    },
+          { id: 'screener', label: 'Screener' },
+        ].map(({ id, label }) => (
           <button
-            onClick={toggleTheme}
-            title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+            key={id}
+            onClick={() => setTopView(id)}
             style={{
-              marginLeft: 'auto',
-              width: '32px', height: '32px', padding: 0,
-              border: 'none', borderRadius: '6px',
-              background: 'transparent',
-              color: 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'color 0.15s',
+              height: '40px', padding: '0 16px',
+              background: 'none', border: 'none',
+              borderBottom: topView === id ? '2px solid var(--blue)' : '2px solid transparent',
+              color: topView === id ? 'var(--text-primary)' : 'var(--text-muted)',
+              fontSize: '13px', fontWeight: topView === id ? 600 : 400,
+              cursor: 'pointer', transition: 'color 0.1s',
             }}
           >
-            {theme === 'light' ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
-              </svg>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="5"/>
-                <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
-            )}
+            {label}
           </button>
-        </header>
+        ))}
 
-        {/* ── Tabs ── */}
-        <div style={{
-          display: 'flex', alignItems: 'flex-end',
-          background: 'var(--bg-panel)',
-          borderBottom: '1px solid var(--border)',
-          padding: '0 20px', flexShrink: 0, height: '36px',
-        }}>
-          {['chart', 'overview', 'financials', 'dividends'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => handleTabChange(tab)}
-              style={{
-                height: '36px', padding: '0 14px',
-                background: 'none', border: 'none',
-                borderBottom: mainTab === tab ? '2px solid var(--blue)' : '2px solid transparent',
-                color: mainTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontSize: '12px', fontWeight: mainTab === tab ? 600 : 400,
-                cursor: 'pointer', textTransform: 'capitalize',
-                transition: 'color 0.1s',
-              }}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+        {/* Theme toggle pinned to the right */}
+        <button
+          onClick={toggleTheme}
+          title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+          style={{
+            marginLeft: 'auto',
+            width: '32px', height: '32px', padding: 0,
+            border: 'none', borderRadius: '6px',
+            background: 'transparent', color: 'var(--text-secondary)',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'color 0.15s',
+          }}
+        >
+          {theme === 'light' ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          )}
+        </button>
+      </div>
 
-        {mainTab === 'overview' && <OverviewPanel info={info} />}
-        {mainTab === 'financials' && <FinancialsPanel data={financialsData} loading={financialsLoading} symbol={symbol} />}
-        {mainTab === 'dividends'  && <DividendsPanel  data={dividendsData}  loading={dividendsLoading}  symbol={symbol} />}
+      {/* ── View area: fills remaining height ── */}
+      <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
 
-        {mainTab === 'chart' && <>
+      {/* ══════════════════════════════════════════════════════════════
+          CHART VIEW
+      ══════════════════════════════════════════════════════════════ */}
+      <div style={{
+        display: topView === 'chart' ? 'flex' : 'none',
+        height: '100%', overflow: 'hidden',
+      }}>
 
-        {/* ── Toolbar: interval (left) + range (right) ── */}
-        <div style={{
-          height: '40px', flexShrink: 0,
-          background: 'var(--bg-panel)',
-          borderBottom: '1px solid var(--border)',
-          display: 'flex', alignItems: 'center',
-          padding: '0 16px', justifyContent: 'space-between',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            {INTRADAY_INTERVALS.map(ivl => (
-              <IntervalBtn key={ivl} label={ivl} active={interval === ivl} onClick={() => handleInterval(ivl)} />
-            ))}
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 6px' }} />
-            {DAILY_INTERVALS.map(ivl => (
-              <IntervalBtn key={ivl} label={INTERVAL_LABELS[ivl]} active={interval === ivl} onClick={() => handleInterval(ivl)} />
-            ))}
-          </div>
+        {/* Watchlist sidebar */}
+        <Watchlist
+          width={sidebarWidth}
+          lists={watchlists}
+          activeListId={activeListId}
+          activeSymbol={symbol}
+          loading={wlLoading}
+          onSelectList={setActiveListId}
+          onCreateList={handleCreateList}
+          onImportList={handleImportList}
+          onDeleteList={handleDeleteList}
+          onSelectSymbol={selectSymbol}
+          onDeleteSymbol={handleDeleteSymbol}
+          onAddSymbol={handleAddSymbol}
+          onReorderSymbols={handleReorderSymbols}
+        />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            {RANGES.map(r => {
-              const disabled = interval ? !isCompatible(r, interval) : false
-              return (
-                <RangeBtn
-                  key={r} label={r} active={range === r} disabled={disabled}
-                  onClick={() => !disabled && handleRange(r)}
-                />
-              )
-            })}
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
-            {/* Chart type selector */}
-            <ChartTypeSelector value={chartType} onChange={setChartType} />
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
-            <button
-              type="button"
-              onClick={handleAnalysis}
-              disabled={!symbol && !input.trim()}
-              title="Run analysis on current symbol"
-              style={{
-                height: '24px', padding: '0 10px',
-                background: '#f57c00', border: 'none',
-                borderRadius: '4px', color: '#fff',
-                fontSize: '11px', fontWeight: 600, cursor: 'pointer',
-                opacity: (!symbol && !input.trim()) ? 0.4 : 1,
-              }}
-            >
-              Analysis
-            </button>
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
-            <IndicatorPanel
-              maConfigs={maConfigs}       onMaChange={setMaConfigs}
-              macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
-              guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
-              rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
-              squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
-            />
-            <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
-            {/* Chart config selector */}
-            <ChartConfigSelector
-              configs={chartConfigs}
-              activeId={activeChartConfigId}
-              onSelect={handleChartConfigChange}
-              onCreate={handleCreateChartConfig}
-              onDelete={handleDeleteChartConfig}
-            />
-          </div>
-        </div>
+        {/* Sidebar resize handle */}
+        <div
+          ref={sidebarDragRef}
+          onMouseDown={handleSidebarMouseDown}
+          style={{
+            width: '4px', flexShrink: 0, cursor: 'col-resize',
+            background: 'var(--border)', transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = 'var(--blue)'}
+          onMouseLeave={e => e.currentTarget.style.background = 'var(--border)'}
+        />
 
-        {/* ── Price bar ── */}
-        {info && (
-          <div style={{
-            flexShrink: 0,
-            background: 'var(--bg-panel)',
-            borderBottom: '1px solid var(--border)',
-            padding: '8px 20px',
-            display: 'flex', alignItems: 'baseline', gap: '12px',
+        {/* Main content */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+
+          {/* Search header */}
+          <header style={{
+            height: '48px', flexShrink: 0,
+            background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', padding: '0 20px', gap: '16px',
           }}>
-            <span style={{ fontSize: '13px', fontWeight: 700 }}>{info.symbol}</span>
-            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{info.name}</span>
-            {info.sector && (
-              <span style={{ fontSize: '11px', color: 'var(--text-primary)' }}>
-                {info.sector}{info.industry ? ` · ${info.industry}` : ''}
-              </span>
-            )}
-            {info.current_price != null && (
-              <span style={{ fontSize: '20px', fontWeight: 600, marginLeft: '8px' }}>
-                {info.current_price.toFixed(2)}
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>
-                  {info.currency}
-                </span>
-              </span>
-            )}
-            {change && (
-              <span style={{
-                fontSize: '13px', fontWeight: 500,
-                color: change.diff >= 0 ? 'var(--green)' : 'var(--red)',
-              }}>
-                {change.diff >= 0 ? '+' : ''}{change.diff.toFixed(2)}
-                {' '}({change.diff >= 0 ? '+' : ''}{change.pct.toFixed(2)}%)
-              </span>
-            )}
-          </div>
-        )}
+            <form onSubmit={handleSearch} style={{ display: 'flex', gap: '6px' }}>
+              <input
+                ref={symbolInputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                placeholder="Symbol — e.g. AAPL, TSLA"
+                style={{
+                  width: '220px', height: '32px',
+                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                  borderRadius: '6px', padding: '0 10px',
+                  color: 'var(--text-primary)', fontSize: '13px', outline: 'none',
+                }}
+              />
+              <button type="submit" style={{
+                height: '32px', padding: '0 14px',
+                background: 'var(--blue)', border: 'none',
+                borderRadius: '6px', color: '#fff', fontSize: '12px', fontWeight: 600,
+              }}>Go</button>
+            </form>
+          </header>
 
-        {/* ── Chart area ── */}
-        <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-          {!symbol && !loading && <Placeholder text="Select a symbol or search above" />}
-          {loading && chartType !== 'renko' && <Placeholder text="Loading…" />}
-          {error && !loading && chartType !== 'renko' && (
+          {/* Inner tabs */}
+          <div style={{
+            display: 'flex', alignItems: 'flex-end',
+            background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)',
+            padding: '0 20px', flexShrink: 0, height: '36px',
+          }}>
+            {['chart', 'overview', 'financials', 'dividends'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => handleTabChange(tab)}
+                style={{
+                  height: '36px', padding: '0 14px',
+                  background: 'none', border: 'none',
+                  borderBottom: mainTab === tab ? '2px solid var(--blue)' : '2px solid transparent',
+                  color: mainTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
+                  fontSize: '12px', fontWeight: mainTab === tab ? 600 : 400,
+                  cursor: 'pointer', textTransform: 'capitalize', transition: 'color 0.1s',
+                }}
+              >{tab}</button>
+            ))}
+          </div>
+
+          {mainTab === 'overview'   && <OverviewPanel info={info} />}
+          {mainTab === 'financials' && <FinancialsPanel data={financialsData} loading={financialsLoading} symbol={symbol} />}
+          {mainTab === 'dividends'  && <DividendsPanel  data={dividendsData}  loading={dividendsLoading}  symbol={symbol} />}
+
+          {mainTab === 'chart' && <>
+
+          {/* Toolbar */}
+          <div style={{
+            height: '40px', flexShrink: 0,
+            background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)',
+            display: 'flex', alignItems: 'center', padding: '0 16px', justifyContent: 'space-between',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              {INTRADAY_INTERVALS.map(ivl => (
+                <IntervalBtn key={ivl} label={ivl} active={interval === ivl} onClick={() => handleInterval(ivl)} />
+              ))}
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 6px' }} />
+              {DAILY_INTERVALS.map(ivl => (
+                <IntervalBtn key={ivl} label={INTERVAL_LABELS[ivl]} active={interval === ivl} onClick={() => handleInterval(ivl)} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              {RANGES.map(r => {
+                const disabled = interval ? !isCompatible(r, interval) : false
+                return (
+                  <RangeBtn key={r} label={r} active={range === r} disabled={disabled}
+                    onClick={() => !disabled && handleRange(r)} />
+                )
+              })}
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+              <ChartTypeSelector value={chartType} onChange={setChartType} />
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+              <button
+                type="button" onClick={handleAnalysis}
+                disabled={!symbol && !input.trim()}
+                title="Run analysis on current symbol"
+                style={{
+                  height: '24px', padding: '0 10px',
+                  background: '#f57c00', border: 'none', borderRadius: '4px',
+                  color: '#fff', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                  opacity: (!symbol && !input.trim()) ? 0.4 : 1,
+                }}
+              >Analysis</button>
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+              <IndicatorPanel
+                maConfigs={maConfigs}       onMaChange={setMaConfigs}
+                macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
+                guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
+                rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
+                squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
+              />
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
+              <ChartConfigSelector
+                configs={chartConfigs}
+                activeId={activeChartConfigId}
+                onSelect={handleChartConfigChange}
+                onCreate={handleCreateChartConfig}
+                onDelete={handleDeleteChartConfig}
+              />
+            </div>
+          </div>
+
+          {/* Price bar */}
+          {info && (
             <div style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0, background: 'var(--bg-panel)',
+              borderBottom: '1px solid var(--border)', padding: '8px 20px',
+              display: 'flex', alignItems: 'baseline', gap: '12px',
             }}>
-              <div style={{
-                padding: '12px 20px', borderRadius: '8px',
-                background: 'rgba(239,83,80,0.1)', border: '1px solid var(--red)',
-                color: 'var(--red)', fontSize: '13px',
-              }}>
-                {error}
-              </div>
+              <span style={{ fontSize: '13px', fontWeight: 700 }}>{info.symbol}</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{info.name}</span>
+              {info.sector && (
+                <span style={{ fontSize: '11px', color: 'var(--text-primary)' }}>
+                  {info.sector}{info.industry ? ` · ${info.industry}` : ''}
+                </span>
+              )}
+              {info.current_price != null && (
+                <span style={{ fontSize: '20px', fontWeight: 600, marginLeft: '8px' }}>
+                  {info.current_price.toFixed(2)}
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '4px' }}>{info.currency}</span>
+                </span>
+              )}
+              {change && (
+                <span style={{ fontSize: '13px', fontWeight: 500, color: change.diff >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                  {change.diff >= 0 ? '+' : ''}{change.diff.toFixed(2)}
+                  {' '}({change.diff >= 0 ? '+' : ''}{change.pct.toFixed(2)}%)
+                </span>
+              )}
             </div>
           )}
-          {candles && !loading && chartType !== 'renko' && (
-            <StockChart
-              candles={candles}    volume={volume}
-              chartType={chartType}
-              visibleDays={RANGE_DAYS[range]}
-              theme={theme}
-              maConfigs={maConfigs}       maData={maData}
-              macdConfigs={macdConfigs}   macdData={macdData}
-              guppyConfigs={guppyConfigs} guppyData={guppyData}
-              rwbConfigs={rwbConfigs}         rwbData={rwbData}
-              squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
-            />
-          )}
-          {symbol && chartType === 'renko' && (
-            <RenkoChart symbol={symbol} theme={theme} />
-          )}
-        </main>
 
-        </>}
+          {/* Chart area */}
+          <main style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+            {!symbol && !loading && <Placeholder text="Select a symbol or search above" />}
+            {loading && chartType !== 'renko' && <Placeholder text="Loading…" />}
+            {error && !loading && chartType !== 'renko' && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{
+                  padding: '12px 20px', borderRadius: '8px',
+                  background: 'rgba(239,83,80,0.1)', border: '1px solid var(--red)',
+                  color: 'var(--red)', fontSize: '13px',
+                }}>{error}</div>
+              </div>
+            )}
+            {candles && !loading && chartType !== 'renko' && (
+              <StockChart
+                candles={candles} volume={volume}
+                chartType={chartType} visibleDays={RANGE_DAYS[range]} theme={theme}
+                maConfigs={maConfigs}       maData={maData}
+                macdConfigs={macdConfigs}   macdData={macdData}
+                guppyConfigs={guppyConfigs} guppyData={guppyData}
+                rwbConfigs={rwbConfigs}         rwbData={rwbData}
+                squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
+              />
+            )}
+            {symbol && chartType === 'renko' && <RenkoChart symbol={symbol} theme={theme} />}
+          </main>
+
+          </>} {/* end mainTab === 'chart' */}
+        </div>
+      </div> {/* end Chart view */}
+
+      {/* ══════════════════════════════════════════════════════════════
+          SCREENER VIEW  —  always mounted for state preservation
+      ══════════════════════════════════════════════════════════════ */}
+      <div style={{
+        display: topView === 'screener' ? 'flex' : 'none',
+        height: '100%', overflow: 'hidden',
+      }}>
+        <ScreenerPanel
+          watchlists={watchlists}
+          screenConfigs={screenConfigs}
+          activeConfigId={activeConfigId}
+          onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
+          onImportList={handleImportList}
+          onToggleRule={handleToggleRule}
+          onConditionParam={handleConditionParam}
+        />
+      </div> {/* end Screener view */}
+
+      {/* ══════════════════════════════════════════════════════════════
+          MARKET VIEW  —  placeholder
+      ══════════════════════════════════════════════════════════════ */}
+      <div style={{
+        display: topView === 'market' ? 'flex' : 'none',
+        height: '100%', overflow: 'hidden',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Market — coming soon</span>
       </div>
+
+      </div> {/* end view area */}
 
       {/* ── Analysis modal ── */}
       {analysisOpen && (

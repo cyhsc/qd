@@ -11,8 +11,10 @@ import yfinance as yf
 
 import pandas as pd
 
+from pydantic import BaseModel
+
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
-from core.screen import screen_individual
+from core.screen import screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
 from db import CacheMeta, Price, ScreenConfig, get_db
 
@@ -421,6 +423,76 @@ async def get_screen(
             "consecutive_positive_bars": result.sqz.consecutive_positive_bars,
         },
         "report": result.report,
+    }
+
+
+# ── Batch screen ─────────────────────────────────────────────────────────────
+
+class BatchScreenRequest(BaseModel):
+    symbols:   list[str]
+    config_id: int | None = None
+
+
+@router.post("/screen/batch")
+async def batch_screen(
+    req: BatchScreenRequest,
+    db:  AsyncSession = Depends(get_db),
+):
+    """
+    Screen a list of symbols against the active screen config and return
+    per-symbol pass/fail results plus a condition matrix.
+    """
+    if not req.symbols:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+
+    condition_overrides: dict = {}
+    if req.config_id is not None:
+        row = await db.get(ScreenConfig, req.config_id)
+        if row:
+            condition_overrides = row.conditions or {}
+
+    loop = asyncio.get_event_loop()
+    try:
+        batch = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: screen_symbols_detailed(
+                req.symbols,
+                condition_overrides=condition_overrides,
+                max_workers=1,
+            )),
+            timeout=600.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail="Batch screening timed out (>10 min)")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Batch screening failed: {exc}")
+
+    deduped = list(dict.fromkeys(s.upper().strip() for s in req.symbols))
+    results = []
+    for sym in deduped:
+        if sym in batch.errored:
+            results.append({
+                "symbol": sym, "verdict": None, "score": None, "total": None,
+                "conditions": [], "error": batch.errored[sym],
+            })
+        elif sym in batch.results:
+            r = batch.results[sym]
+            results.append({
+                "symbol":    sym,
+                "verdict":   r.verdict,
+                "score":     r.score,
+                "total":     r.total,
+                "conditions": [
+                    {"name": c.name, "passed": c.passed, "verdict_role": c.verdict_role}
+                    for c in r.conditions
+                ],
+                "error": None,
+            })
+
+    return {
+        "results": results,
+        "passed":  batch.passed,
+        "failed":  batch.failed,
+        "errored": batch.errored,
     }
 
 
