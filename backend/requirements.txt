@@ -8,3 +8,4 @@ greenlet>=3.0.0
 TA-Lib>=0.4.0
 numpy>=1.23.0
 stocktrends>=0.1.6
+lxml>=4.9.0

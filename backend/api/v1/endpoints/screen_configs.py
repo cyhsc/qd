@@ -32,7 +32,15 @@ class ConditionPatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _row_to_dict(row: ScreenConfig) -> dict:
-    return {"id": row.id, "name": row.name, "conditions": row.conditions}
+    conditions = row.conditions or {}
+    # Expose the stored universe separately for the frontend
+    universe = conditions.get("_universe", {})
+    return {
+        "id":         row.id,
+        "name":       row.name,
+        "conditions": conditions,
+        "universe":   universe,          # convenience alias
+    }
 
 
 # ---------------------------------------------------------------------------

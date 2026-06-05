@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 
 // ── Condition display metadata ────────────────────────────────────────────────
 
@@ -24,6 +24,17 @@ const COND_META = {
   sqz_consecutive_positive_bars:            { short: 'SQZ-N',  label: 'SQZ momentum conseq. +'    },
 }
 
+// Ordered list of every condition the analysis engine supports
+const ALL_CONDITIONS = [
+  'rwb_gap_positive', 'rwb_gap_rising', 'rwb_slow_width_rising', 'rwb_fast_above_slow',
+  'rwb_bars_since_fast_above_slow', 'rwb_slow_width_consecutive_positive_bars',
+  'rwb_fast_width_consecutive_positive_bars', 'rwb_slow_width_consecutive_rising_bars',
+  'rwb_fast_width_consecutive_rising_bars',
+  'macd_line_positive', 'macd_line_rising', 'macd_histogram_positive', 'macd_histogram_rising',
+  'macd_signal_positive', 'macd_histogram_consecutive_positive_bars',
+  'sqz_momentum_positive', 'sqz_momentum_rising', 'sqz_not_on', 'sqz_consecutive_positive_bars',
+]
+
 // Conditions that have a threshold + operator parameter
 const PARAMETRIC_CONDITIONS = [
   'sqz_consecutive_positive_bars',
@@ -44,25 +55,106 @@ export function ScreenerPanel({
   watchlists,
   screenConfigs,
   activeConfigId,
-  onOpenChart,       // (sym) → void — switches to chart tab and loads symbol
-  onImportList,      // (name, symbols, onProgress) → Promise<void>
-  onToggleRule,      // (condName, defaultRole) → void
-  onConditionParam,  // (condName, key, val) → void
+  onSwitchScreener,   // (id) → void
+  onCreateScreener,   // (name) → Promise<config>
+  onDeleteScreener,   // (id) → void
+  onRenameScreener,   // (id, name) → void
+  onSaveUniverse,     // (id, {mode, list_id, symbols}) → void
+  onOpenChart,        // (sym) → void
+  onImportList,       // (name, symbols, onProgress) → Promise<void>
+  onToggleRule,       // (condName, defaultRole) → void
+  onConditionParam,   // (condName, key, val) → void
 }) {
   const [universeMode,   setUniverseMode]   = useState('watchlist')
   const [selectedListId, setSelectedListId] = useState(() =>
     watchlists[0]?.id != null ? String(watchlists[0].id) : null
   )
   const [manualInput,    setManualInput]    = useState('')
+
+  // ── Sync universe from the active screener config ─────────────────────────
+  const syncingRef     = useRef(false)
+  const universeTimer  = useRef(null)
+
+  useEffect(() => {
+    const cfg = screenConfigs.find(c => String(c.id) === String(activeConfigId))
+    if (!cfg) return
+    syncingRef.current = true
+    const u = cfg.conditions?._universe ?? {}
+    setUniverseMode(u.mode ?? 'watchlist')
+    setSelectedListId(
+      u.list_id != null ? String(u.list_id)
+        : watchlists[0]?.id != null ? String(watchlists[0].id) : null
+    )
+    setManualInput(u.symbols ?? '')
+    // Clear sync flag after React has flushed state updates
+    requestAnimationFrame(() => { syncingRef.current = false })
+  }, [activeConfigId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save universe changes (debounced, skipped when syncing from config)
+  useEffect(() => {
+    if (syncingRef.current) return
+    clearTimeout(universeTimer.current)
+    universeTimer.current = setTimeout(() => {
+      if (activeConfigId == null) return
+      onSaveUniverse(activeConfigId, {
+        mode:     universeMode,
+        list_id:  universeMode === 'watchlist' && selectedListId ? Number(selectedListId) : null,
+        symbols:  universeMode === 'manual' ? manualInput : '',
+      })
+    }, 800)
+    return () => clearTimeout(universeTimer.current)
+  }, [universeMode, selectedListId, manualInput]) // eslint-disable-line react-hooks/exhaustive-deps
   const [running,        setRunning]        = useState(false)
   const [screenData,     setScreenData]     = useState(null)   // response from /screen/batch
   const [runError,       setRunError]       = useState(null)
   const [savingList,     setSavingList]     = useState(false)
-  const [saveNameInput,  setSaveNameInput]  = useState('')
-  const [saveProgress,   setSaveProgress]  = useState(null)   // {done, total}
+  const [saveNameInput,   setSaveNameInput]   = useState('')
+  const [saveProgress,    setSaveProgress]   = useState(null)   // {done, total}
+  const [creatingScreener, setCreatingScreener] = useState(false)
+  const [newScreenerName,  setNewScreenerName]  = useState('')
+  const [renamingId,       setRenamingId]       = useState(null)
+  const [renameInput,      setRenameInput]      = useState('')
 
-  const activeConfig    = screenConfigs.find(c => c.id === activeConfigId)
-  const configConditions = activeConfig?.conditions ?? {}
+  const activeConfig     = screenConfigs.find(c => String(c.id) === String(activeConfigId))
+
+  // Merge stored conditions over the full default set so every condition is
+  // always visible even for configs created before the full list was seeded.
+  const configConditions = useMemo(() => {
+    const stored = activeConfig?.conditions ?? {}
+    const merged = {}
+    for (const name of ALL_CONDITIONS) {
+      merged[name] = { verdict_role: null, ...stored[name] }
+    }
+    // Also preserve any extra keys already in stored (e.g. _universe)
+    for (const [k, v] of Object.entries(stored)) {
+      if (!(k in merged)) merged[k] = v
+    }
+    return merged
+  }, [activeConfig])
+
+  // ── Screener selector handlers ─────────────────────────────────────────────
+
+  async function handleCreateScreener(e) {
+    e.preventDefault()
+    const name = newScreenerName.trim()
+    if (!name) return
+    await onCreateScreener(name)
+    setNewScreenerName('')
+    setCreatingScreener(false)
+  }
+
+  function handleStartRename(cfg) {
+    setRenamingId(cfg.id)
+    setRenameInput(cfg.name)
+  }
+
+  function handleFinishRename(e) {
+    e.preventDefault()
+    const name = renameInput.trim()
+    if (name && renamingId != null) onRenameScreener(renamingId, name)
+    setRenamingId(null)
+    setRenameInput('')
+  }
 
   // ── Universe ───────────────────────────────────────────────────────────────
 
@@ -148,6 +240,108 @@ export function ScreenerPanel({
         overflow: 'hidden',
       }}>
 
+        {/* ── Screener selector ── */}
+        <SectionLabel text="SCREENER" />
+        <div style={{ padding: '0 14px 10px', flexShrink: 0 }}>
+          {creatingScreener ? (
+            <form onSubmit={handleCreateScreener} style={{ display: 'flex', gap: '4px' }}>
+              <input
+                autoFocus
+                value={newScreenerName}
+                onChange={e => setNewScreenerName(e.target.value)}
+                onKeyDown={e => e.key === 'Escape' && setCreatingScreener(false)}
+                placeholder="Screener name…"
+                style={{
+                  flex: 1, height: '28px', padding: '0 8px', fontSize: '12px',
+                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                  borderRadius: '5px', color: 'var(--text-primary)', outline: 'none',
+                }}
+              />
+              <button type="submit" style={{
+                height: '28px', padding: '0 8px', fontSize: '11px',
+                background: 'var(--blue)', border: 'none', borderRadius: '5px',
+                color: '#fff', cursor: 'pointer',
+              }}>OK</button>
+              <button type="button" onClick={() => setCreatingScreener(false)} style={{
+                height: '28px', padding: '0 6px', fontSize: '14px',
+                background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+              }}>×</button>
+            </form>
+          ) : renamingId != null ? (
+            <form onSubmit={handleFinishRename} style={{ display: 'flex', gap: '4px' }}>
+              <input
+                autoFocus
+                value={renameInput}
+                onChange={e => setRenameInput(e.target.value)}
+                onKeyDown={e => e.key === 'Escape' && setRenamingId(null)}
+                style={{
+                  flex: 1, height: '28px', padding: '0 8px', fontSize: '12px',
+                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                  borderRadius: '5px', color: 'var(--text-primary)', outline: 'none',
+                }}
+              />
+              <button type="submit" style={{
+                height: '28px', padding: '0 8px', fontSize: '11px',
+                background: 'var(--blue)', border: 'none', borderRadius: '5px',
+                color: '#fff', cursor: 'pointer',
+              }}>OK</button>
+              <button type="button" onClick={() => setRenamingId(null)} style={{
+                height: '28px', padding: '0 6px', fontSize: '14px',
+                background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+              }}>×</button>
+            </form>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <select
+                value={activeConfigId ?? ''}
+                onChange={e => onSwitchScreener(Number(e.target.value))}
+                style={{
+                  flex: 1, height: '28px', padding: '0 6px', fontSize: '12px',
+                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                  borderRadius: '5px', color: 'var(--text-primary)',
+                  cursor: 'pointer', outline: 'none',
+                }}
+              >
+                {screenConfigs.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {/* Rename */}
+              <button
+                onClick={() => activeConfig && handleStartRename(activeConfig)}
+                title="Rename screener"
+                style={{
+                  height: '28px', padding: '0 6px', fontSize: '12px',
+                  background: 'none', border: 'none',
+                  color: 'var(--text-muted)', cursor: 'pointer',
+                }}
+              >✎</button>
+              {/* Delete (only if more than one) */}
+              {screenConfigs.length > 1 && (
+                <button
+                  onClick={() => onDeleteScreener(activeConfigId)}
+                  title="Delete screener"
+                  style={{
+                    height: '28px', padding: '0 5px', fontSize: '15px',
+                    background: 'none', border: 'none',
+                    color: 'var(--text-muted)', cursor: 'pointer',
+                  }}
+                >×</button>
+              )}
+              {/* Create new */}
+              <button
+                onClick={() => setCreatingScreener(true)}
+                title="New screener"
+                style={{
+                  height: '28px', padding: '0 6px', fontSize: '17px',
+                  background: 'none', border: 'none',
+                  color: 'var(--text-muted)', cursor: 'pointer',
+                }}
+              >+</button>
+            </div>
+          )}
+        </div>
+
         {/* Universe section — fixed height, never scrolls away */}
         <SectionLabel text="UNIVERSE" />
         <div style={{ padding: '0 14px 12px', flexShrink: 0 }}>
@@ -212,13 +406,9 @@ export function ScreenerPanel({
         {/* Conditions section — scrolls independently so button is never hidden */}
         <SectionLabel text="CONDITIONS" />
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 8px' }}>
-          {Object.keys(configConditions).length === 0 ? (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              No conditions configured. Use the <strong>Analysis</strong> button on a stock to set up conditions.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {Object.entries(configConditions).map(([name, cfg]) => {
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {ALL_CONDITIONS.map(name => {
+                const cfg   = configConditions[name] ?? { verdict_role: null }
                 const role  = 'verdict_role' in cfg ? cfg.verdict_role : null
                 const isReq = role !== null && role !== undefined
                 const isParametric = PARAMETRIC_CONDITIONS.includes(name)
@@ -290,8 +480,7 @@ export function ScreenerPanel({
                   </div>
                 )
               })}
-            </div>
-          )}
+          </div>
         </div>
 
         {/* Run button — always pinned at the bottom, never scrolls away */}

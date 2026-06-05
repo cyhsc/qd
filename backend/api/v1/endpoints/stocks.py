@@ -86,13 +86,28 @@ def to_chart_time(ts: str):
     return int(ts) if ts.isdigit() else ts
 
 
+def _sf(v):
+    """Return v if it's a finite float/int, else None."""
+    if v is None:
+        return None
+    try:
+        import math
+        f = float(v)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return None
+
+
 def prices_to_response(rows: list[Price], symbol: str, range_key: str, interval: str) -> dict:
     candles, volume = [], []
     for r in rows:
+        o, c, h, l = _sf(r.open), _sf(r.close), _sf(r.high), _sf(r.low)
+        if o is None or c is None:
+            continue   # skip rows with null/nan OHLC
         ct = to_chart_time(r.ts)
-        candles.append({"time": ct, "open": r.open, "high": r.high, "low": r.low, "close": r.close})
-        volume.append({"time": ct, "value": r.volume,
-                       "color": "#26a69a" if r.close >= r.open else "#ef5350"})
+        candles.append({"time": ct, "open": o, "high": h, "low": l, "close": c})
+        volume.append({"time": ct, "value": _sf(r.volume) or 0,
+                       "color": "#26a69a" if c >= o else "#ef5350"})
     return {"symbol": symbol, "range": range_key, "interval": interval,
             "candles": candles, "volume": volume}
 
@@ -181,12 +196,14 @@ async def get_history(
 
     candles, volume, db_rows = [], [], []
     for ts, row in hist.iterrows():
+        o = _sf(row["Open"])
+        c = _sf(row["Close"])
+        if o is None or c is None:
+            continue   # skip rows with non-finite OHLC
+        h  = _sf(row["High"])
+        l  = _sf(row["Low"])
+        v  = int(row["Volume"]) if row["Volume"] == row["Volume"] else 0
         t  = format_time(ts, yf_interval)
-        o  = round(float(row["Open"]),  4)
-        h  = round(float(row["High"]),  4)
-        l  = round(float(row["Low"]),   4)
-        c  = round(float(row["Close"]), 4)
-        v  = int(row["Volume"])
         ct = to_chart_time(t)
         candles.append({"time": ct, "open": o, "high": h, "low": l, "close": c})
         volume.append({"time": ct, "value": v, "color": "#26a69a" if c >= o else "#ef5350"})
@@ -362,7 +379,7 @@ async def get_screen(
     if config_id is not None:
         row = await db.get(ScreenConfig, config_id)
         if row:
-            condition_overrides = row.conditions or {}
+            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if not k.startswith('_')}
 
     loop = asyncio.get_event_loop()
     try:
@@ -449,7 +466,7 @@ async def batch_screen(
     if req.config_id is not None:
         row = await db.get(ScreenConfig, req.config_id)
         if row:
-            condition_overrides = row.conditions or {}
+            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if not k.startswith('_')}
 
     loop = asyncio.get_event_loop()
     try:
@@ -776,3 +793,107 @@ async def get_renko(
         raise HTTPException(status_code=500, detail=f"Renko computation failed: {exc}")
 
     return {"symbol": sym, **result}
+
+
+# ── Events (earnings + ex-dividends) ──────────────────────────────────────────
+
+@router.get("/{symbol}/events")
+async def get_events(symbol: str):
+    """
+    Return earnings dates and ex-dividend dates for chart markers.
+
+    earnings  – list of {date, eps_estimate, eps_actual, surprise_pct}
+    dividends – list of {date, amount}
+    Both lists are sorted ascending by date.
+    """
+    sym  = symbol.upper()
+    loop = asyncio.get_event_loop()
+
+    def _fetch():
+        import math
+
+        def sf(v):
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return None if (math.isnan(f) or math.isinf(f)) else round(f, 4)
+            except (TypeError, ValueError):
+                return None
+
+        def to_date(dt):
+            try:
+                return str(dt.date()) if hasattr(dt, "date") else str(dt)[:10]
+            except Exception:
+                return None
+
+        t = yf.Ticker(sym)
+
+        # ── Earnings dates ────────────────────────────────────────────────────
+        earnings = []
+        try:
+            ed = t.earnings_dates
+            if ed is not None and not ed.empty:
+                for dt, row in ed.iterrows():
+                    d = to_date(dt)
+                    if not d:
+                        continue
+                    earnings.append({
+                        "date":         d,
+                        "eps_estimate": sf(row.get("EPS Estimate")),
+                        "eps_actual":   sf(row.get("Reported EPS")),
+                        "surprise_pct": sf(row.get("Surprise(%)")),
+                    })
+        except Exception as exc:
+            logger.debug("earnings_dates fetch failed for %s: %s", sym, exc)
+
+        # ── Ex-dividend dates (history + upcoming) ───────────────────────────
+        dividends = []
+        try:
+            divs = t.dividends
+            if divs is not None and not divs.empty:
+                for dt, amount in divs.items():
+                    d   = to_date(dt)
+                    amt = sf(amount)
+                    if d and amt:
+                        dividends.append({"date": d, "amount": amt})
+        except Exception as exc:
+            logger.debug("dividends fetch failed for %s: %s", sym, exc)
+
+        # Next ex-dividend date from ticker.info (may not appear in ticker.dividends yet)
+        try:
+            import datetime
+            info       = t.info or {}
+            ex_div_ts  = info.get("exDividendDate")
+            if ex_div_ts:
+                # Use UTC to match the dates stored by ticker.dividends
+                ex_div_date = str(datetime.datetime.utcfromtimestamp(ex_div_ts).date())
+                ex_dt       = datetime.date.fromisoformat(ex_div_date)
+                # Fuzzy dedup: skip if any existing dividend is within 1 day
+                already = any(
+                    abs((datetime.date.fromisoformat(d["date"]) - ex_dt).days) <= 1
+                    for d in dividends
+                )
+                if not already:
+                    amt = sf(info.get("lastDividendValue")) or (dividends[-1]["amount"] if dividends else None)
+                    if amt:
+                        dividends.append({"date": ex_div_date, "amount": amt})
+        except Exception as exc:
+            logger.debug("upcoming ex-div fetch failed for %s: %s", sym, exc)
+
+        return {
+            "earnings":  sorted(earnings,  key=lambda x: x["date"]),
+            "dividends": sorted(dividends, key=lambda x: x["date"]),
+        }
+
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch),
+            timeout=20.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408, detail=f"Timed out fetching events for '{sym}'")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch events for '{sym}': {exc}")
+
+    return result

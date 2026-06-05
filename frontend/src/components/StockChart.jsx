@@ -125,6 +125,60 @@ function computeMainData(candles, type) {
   return candles  // 'candlestick' and 'bars' use OHLCV directly
 }
 
+/**
+ * Build lightweight-charts SeriesMarker array from earnings + dividend events.
+ * Only rendered on the daily ('D') interval; returns [] for everything else.
+ * Snaps event dates to the nearest candle on-or-after the event date.
+ */
+function buildMarkers(events, candles, interval) {
+  if (!events || !candles?.length) return []
+  if (interval !== 'D') return []                      // daily only
+  if (typeof candles[0].time !== 'string') return []   // intraday safety guard
+
+  // Index of candle dates for fast lookup
+  const dateSet  = new Set(candles.map(c => c.time))
+  const allDates = candles.map(c => c.time).sort()
+
+  function snapDate(date) {
+    if (dateSet.has(date)) return date
+    // Snap to the next available trading session (handles weekends/holidays)
+    for (const d of allDates) { if (d >= date) return d }
+    return null   // date is beyond last candle — skip
+  }
+
+  const markers = []
+
+  for (const e of (events.earnings ?? [])) {
+    if (e.eps_actual == null) continue   // skip future / unconfirmed earnings
+    const t = snapDate(e.date)
+    if (!t) continue
+    markers.push({
+      time:     t,
+      position: 'aboveBar',
+      color:    '#f0932b',
+      shape:    'square',
+      text:     'E',
+      size:     1,
+    })
+  }
+
+  for (const d of (events.dividends ?? [])) {
+    const t = snapDate(d.date)
+    if (!t) continue
+    markers.push({
+      time:     t,
+      position: 'aboveBar',
+      color:    '#26a69a',
+      shape:    'circle',
+      text:     'D',
+      size:     1,
+    })
+  }
+
+  // lightweight-charts requires markers sorted by time
+  return markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0))
+}
+
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -133,6 +187,8 @@ export function StockChart({
   chartType      = 'candlestick',  // 'candlestick' | 'bars' | 'line'
   visibleDays    = Infinity,
   theme          = 'light',
+  interval       = 'D',   // 'D' | 'W' | 'M' | intraday — markers only on 'D'
+  events         = null,  // { earnings: [...], dividends: [...] }
   maConfigs      = [],
   macdConfigs    = [],
   guppyConfigs   = [],
@@ -151,6 +207,8 @@ export function StockChart({
   const rawCandlesRef  = useRef([])     // last-received OHLCV candles
   const rawVolumeRef   = useRef([])     // last-received volume data
   const candlesRef     = useRef([])     // alias kept for MA/MACD crosshair index lookup
+  const eventsRef      = useRef(null)   // latest events (earnings + dividends)
+  const intervalRef    = useRef(interval)
   const chartTypeRef   = useRef(chartType)
   const lastBarRef     = useRef(null)
   const visibleDaysRef = useRef(visibleDays)
@@ -216,6 +274,7 @@ export function StockChart({
   // Keep refs in sync with props so effects with [] deps can read current values
   const themeRef = useRef(theme)
   useEffect(() => { themeRef.current = theme }, [theme])
+  useEffect(() => { intervalRef.current = interval }, [interval])
   useEffect(() => { chartTypeRef.current = chartType }, [chartType])
 
   // Live-update chart colors when theme changes
@@ -424,7 +483,19 @@ export function StockChart({
     const lastBar   = { ...last, volume: lastVol, change, changePct }
     lastBarRef.current = lastBar
     setHover(lastBar)
+
+    // Apply event markers to the volume series if already loaded
+    if (eventsRef.current && volumeRef.current) {
+      try { volumeRef.current.setMarkers(buildMarkers(eventsRef.current, candles, intervalRef.current)) } catch { /* ignore */ }
+    }
   }, [candles, volume])
+
+  // ── Event markers (earnings + dividends) ─────────────────────────────────
+  useEffect(() => {
+    eventsRef.current = events
+    if (!volumeRef.current || !rawCandlesRef.current.length) return
+    try { volumeRef.current.setMarkers(buildMarkers(events, rawCandlesRef.current, intervalRef.current)) } catch { /* ignore */ }
+  }, [events])
 
   // ── Range zoom ────────────────────────────────────────────────────────────
 

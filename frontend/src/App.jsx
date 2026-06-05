@@ -129,6 +129,7 @@ export default function App() {
   const [info,          setInfo]          = useState(null)
   const [candles,       setCandles]       = useState(null)
   const [volume,        setVolume]        = useState(null)
+  const [eventsData,    setEventsData]    = useState(null)
   const [loading,       setLoading]       = useState(false)
   const [error,         setError]         = useState(null)
   const [maConfigs,     setMaConfigs]     = useState(() => lsJson('qd_ma_configs',     []))
@@ -332,6 +333,83 @@ export default function App() {
       .catch(() => {})
   }, [])
 
+  // ── Screener config management ────────────────────────────────────────────
+
+  // All conditions available in the analysis engine, seeded as optional (verdict_role: null).
+  // Parametric conditions also get their default threshold / op.
+  const DEFAULT_SCREENER_CONDITIONS = {
+    // RWB
+    rwb_gap_positive:                         { verdict_role: null },
+    rwb_gap_rising:                           { verdict_role: null },
+    rwb_slow_width_rising:                    { verdict_role: null },
+    rwb_fast_above_slow:                      { verdict_role: null },
+    rwb_bars_since_fast_above_slow:           { verdict_role: null, threshold: 3, op: 'gt' },
+    rwb_slow_width_consecutive_positive_bars: { verdict_role: null, threshold: 3, op: 'gt' },
+    rwb_fast_width_consecutive_positive_bars: { verdict_role: null, threshold: 3, op: 'gt' },
+    rwb_slow_width_consecutive_rising_bars:   { verdict_role: null, threshold: 3, op: 'gt' },
+    rwb_fast_width_consecutive_rising_bars:   { verdict_role: null, threshold: 3, op: 'gt' },
+    // MACD
+    macd_line_positive:                       { verdict_role: null },
+    macd_line_rising:                         { verdict_role: null },
+    macd_histogram_positive:                  { verdict_role: null },
+    macd_histogram_rising:                    { verdict_role: null },
+    macd_signal_positive:                     { verdict_role: null },
+    macd_histogram_consecutive_positive_bars: { verdict_role: null, threshold: 3, op: 'gt' },
+    // SQZ
+    sqz_momentum_positive:                    { verdict_role: null },
+    sqz_momentum_rising:                      { verdict_role: null },
+    sqz_not_on:                               { verdict_role: null },
+    sqz_consecutive_positive_bars:            { verdict_role: null, threshold: 3, op: 'gt' },
+  }
+
+  const handleCreateScreener = useCallback(async (name) => {
+    const res = await fetch('/api/screen-configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, conditions: DEFAULT_SCREENER_CONDITIONS }),
+    })
+    if (!res.ok) return null
+    const created = await res.json()
+    setScreenConfigs(prev => [...prev, created])
+    setActiveConfigId(created.id)
+    return created
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDeleteScreener = useCallback(async (id) => {
+    if (screenConfigs.length <= 1) return
+    await fetch(`/api/screen-configs/${id}`, { method: 'DELETE' }).catch(() => {})
+    setScreenConfigs(prev => {
+      const next = prev.filter(c => c.id !== id)
+      if (String(activeConfigId) === String(id)) setActiveConfigId(next[0]?.id ?? null)
+      return next
+    })
+  }, [screenConfigs, activeConfigId])
+
+  const handleRenameScreener = useCallback(async (id, name) => {
+    const cfg = screenConfigs.find(c => c.id === id)
+    if (!cfg) return
+    setScreenConfigs(prev => prev.map(c => c.id !== id ? c : { ...c, name }))
+    fetch(`/api/screen-configs/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, conditions: cfg.conditions }),
+    }).catch(() => {})
+  }, [screenConfigs])
+
+  // Save universe selection into the screener config's conditions JSON under '_universe'
+  const screenerConfigsRef = useRef(screenConfigs)
+  screenerConfigsRef.current = screenConfigs
+  const handleSaveUniverse = useCallback((id, universeData) => {
+    setScreenConfigs(prev => prev.map(c =>
+      c.id !== id ? c : { ...c, conditions: { ...c.conditions, _universe: universeData } }
+    ))
+    fetch(`/api/screen-configs/${id}/conditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition_name: '_universe', settings: universeData }),
+    }).catch(() => {})
+  }, [])
+
   // Helper: push a config's indicators (including chartType) into live state
   function applyChartConfig(indicators) {
     if (!indicators) return
@@ -366,6 +444,7 @@ export default function App() {
     if (!sym) return
     setLoading(true)
     setError(null)
+    setEventsData(null)
 
     try {
       const params = new URLSearchParams()
@@ -385,6 +464,12 @@ export default function App() {
       setCandles(hist.candles)
       setVolume(hist.volume)
       if (infoRes.ok) setInfo(await infoRes.json())
+
+      // Fetch events in the background (non-blocking — chart shows immediately)
+      fetch(`/api/stocks/${sym}/events`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setEventsData(d) })
+        .catch(() => {})
     } catch (e) {
       setError(e.message)
       setCandles(null)
@@ -1028,6 +1113,8 @@ export default function App() {
               <StockChart
                 candles={candles} volume={volume}
                 chartType={chartType} visibleDays={RANGE_DAYS[range]} theme={theme}
+                interval={interval ?? 'D'}
+                events={eventsData}
                 maConfigs={maConfigs}       maData={maData}
                 macdConfigs={macdConfigs}   macdData={macdData}
                 guppyConfigs={guppyConfigs} guppyData={guppyData}
@@ -1053,6 +1140,11 @@ export default function App() {
           watchlists={watchlists}
           screenConfigs={screenConfigs}
           activeConfigId={activeConfigId}
+          onSwitchScreener={setActiveConfigId}
+          onCreateScreener={handleCreateScreener}
+          onDeleteScreener={handleDeleteScreener}
+          onRenameScreener={handleRenameScreener}
+          onSaveUniverse={handleSaveUniverse}
           onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
           onImportList={handleImportList}
           onToggleRule={handleToggleRule}
