@@ -4,6 +4,7 @@ import { RenkoChart }    from './components/RenkoChart'
 import { Watchlist }     from './components/Watchlist'
 import { IndicatorPanel } from './components/IndicatorPanel'
 import { ScreenerPanel } from './components/ScreenerPanel'
+import { MarketPanel }  from './components/MarketPanel'
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -1153,14 +1154,13 @@ export default function App() {
       </div> {/* end Screener view */}
 
       {/* ══════════════════════════════════════════════════════════════
-          MARKET VIEW  —  placeholder
+          MARKET VIEW
       ══════════════════════════════════════════════════════════════ */}
       <div style={{
         display: topView === 'market' ? 'flex' : 'none',
         height: '100%', overflow: 'hidden',
-        alignItems: 'center', justifyContent: 'center',
       }}>
-        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Market — coming soon</span>
+        <MarketPanel theme={theme} />
       </div>
 
       </div> {/* end view area */}
