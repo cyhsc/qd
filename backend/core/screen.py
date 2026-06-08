@@ -14,13 +14,13 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import numpy as np
-import yfinance as yf
 
 from core.analysis import (
     MACDAnalysis, RWBAnalysis, SQZAnalysis,
     Sign, Slope, SqueezeState,
     analyze_macd, analyze_rwb, analyze_sqz,
 )
+from core.prices import get_daily_ohlc
 
 logger = logging.getLogger(__name__)
 
@@ -257,11 +257,8 @@ def screen_individual(
     overrides = condition_overrides or {}
     logger.info("Screening %s …", sym)
 
-    # ── Fetch 3 years of daily OHLC from Yahoo Finance ────────────────────
-    hist = yf.Ticker(sym).history(period="3y", interval="1d", auto_adjust=False)
-    if hist.empty:
-        raise ValueError(f"No price data found for '{sym}'")
-
+    # ── Fetch daily OHLC via shared cache (falls back to yfinance on miss) ──
+    hist   = get_daily_ohlc(sym)
     closes = np.asarray(hist["Close"].values, dtype=float)
     highs  = np.asarray(hist["High"].values,  dtype=float)
     lows   = np.asarray(hist["Low"].values,   dtype=float)
