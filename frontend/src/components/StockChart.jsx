@@ -232,11 +232,12 @@ export function StockChart({
   const sqzSeriesMap  = useRef(new Map())
   const sqzScaleRef   = useRef(null)
 
-  const [hover,      setHover]      = useState(null)
-  const [maLegend,   setMaLegend]   = useState({})
-  const [macdLegend, setMacdLegend] = useState({})
-  const [rwbLegend,  setRwbLegend]  = useState(null)   // { fast, slow, rwb }
-  const [sqzLegend,  setSqzLegend]  = useState(null)   // { mom, momColor, sqzColor }
+  const [hover,       setHover]      = useState(null)
+  const [maLegend,    setMaLegend]   = useState({})
+  const [macdLegend,  setMacdLegend] = useState({})
+  const [rwbLegend,   setRwbLegend]  = useState(null)   // { fast, slow, rwb }
+  const [sqzLegend,   setSqzLegend]  = useState(null)   // { mom, momColor, sqzColor }
+  const [rightAxisW,  setRightAxisW] = useState(60)     // measured right-axis pixel width
 
   // ── Draggable split ───────────────────────────────────────────────────────
   const [split,       setSplit]       = useState(SPLIT_DEFAULT)
@@ -376,8 +377,11 @@ export function StockChart({
     })
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current)
+      if (containerRef.current) {
         chart.resize(containerRef.current.clientWidth, containerRef.current.clientHeight)
+        const w = chart.priceScale('right').width()
+        if (w > 0) setRightAxisW(w)
+      }
     })
     ro.observe(containerRef.current)
 
@@ -576,7 +580,10 @@ export function StockChart({
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         })
         map.set(cfg.id, { macd: macdSeries, signal: signalSeries, histogram: histSeries })
-        if (!macdScaleRef.current) macdScaleRef.current = histSeries
+        if (!macdScaleRef.current) {
+          macdScaleRef.current = histSeries
+          chart.priceScale('macd').applyOptions({ visible: false })
+        }
         syncSubPaneMargins()
       } else {
         const s = map.get(cfg.id)
@@ -710,7 +717,10 @@ export function StockChart({
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         })
         map.set(cfg.id, { fastLine, slowLine, rwbHist })
-        if (!rwbScaleRef.current) rwbScaleRef.current = rwbHist
+        if (!rwbScaleRef.current) {
+          rwbScaleRef.current = rwbHist
+          chart.priceScale('rwb').applyOptions({ visible: false })
+        }
         syncSubPaneMargins()
       }
 
@@ -770,7 +780,10 @@ export function StockChart({
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
         })
         map.set(cfg.id, { momHist, sqzLine })
-        if (!sqzScaleRef.current) sqzScaleRef.current = momHist
+        if (!sqzScaleRef.current) {
+          sqzScaleRef.current = momHist
+          chart.priceScale('sqz').applyOptions({ visible: false })
+        }
         syncSubPaneMargins()
       }
 
@@ -987,6 +1000,46 @@ export function StockChart({
           )}
         </div>
       )}
+
+      {/* Per-panel right-axis overlays — mask labels bleeding from the main axis
+          and show each sub-panel's own current value within its bounds.          */}
+      {activeSubPanes.map((pane, k) => {
+        const top    = paneTop(k)
+        const bottom = paneTop(k + 1)  // = top + H
+        const bg     = theme === 'dark' ? '#131722' : '#ffffff'
+
+        // Value to display for this panel
+        let valueEl = null
+        if (pane === 'macd') {
+          const v = Object.values(macdLegend)[0]
+          if (v?.macd != null) {
+            const cfg = macdConfigs[0]
+            valueEl = <span style={{ color: cfg?.macdColor ?? 'var(--text-secondary)', fontSize: 10 }}>{fmtMacd(v.macd)}</span>
+          }
+        } else if (pane === 'rwb') {
+          if (rwbLegend?.rwb != null)
+            valueEl = <span style={{ color: '#787b86', fontSize: 10 }}>{fmtRwb(rwbLegend.rwb)}</span>
+        } else if (pane === 'sqz') {
+          if (sqzLegend?.mom != null)
+            valueEl = <span style={{ color: sqzLegend.momColor ?? 'var(--text-secondary)', fontSize: 10 }}>{fmtMacd(sqzLegend.mom)}</span>
+        }
+
+        return (
+          <div key={pane} style={{
+            position: 'absolute', zIndex: 6, pointerEvents: 'none',
+            top: `${top * 100}%`, bottom: `${(1 - bottom) * 100}%`,
+            right: 0, width: rightAxisW,
+            background: bg,
+            borderLeft: '1px solid var(--border)',
+            overflow: 'hidden',
+            display: 'flex', alignItems: 'center',
+            paddingLeft: 4,
+            fontFamily: 'var(--font-mono)',
+          }}>
+            {valueEl}
+          </div>
+        )
+      })}
 
       {/* Chart canvas */}
       <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
