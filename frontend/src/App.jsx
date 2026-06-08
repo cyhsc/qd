@@ -5,6 +5,7 @@ import { Watchlist }     from './components/Watchlist'
 import { IndicatorPanel } from './components/IndicatorPanel'
 import { ScreenerPanel } from './components/ScreenerPanel'
 import { MarketPanel }  from './components/MarketPanel'
+import { AgentPanel }   from './components/AgentPanel'
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -864,6 +865,7 @@ export default function App() {
           { id: 'market',   label: 'Market'   },
           { id: 'chart',    label: 'Chart'    },
           { id: 'screener', label: 'Screener' },
+          { id: 'agent',    label: 'Agent'    },
         ].map(({ id, label }) => (
           <button
             key={id}
@@ -1161,6 +1163,16 @@ export default function App() {
         height: '100%', overflow: 'hidden',
       }}>
         <MarketPanel theme={theme} />
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          AGENT VIEW
+      ══════════════════════════════════════════════════════════════ */}
+      <div style={{
+        display: topView === 'agent' ? 'flex' : 'none',
+        height: '100%', overflow: 'hidden',
+      }}>
+        <AgentPanel watchlists={watchlists} screenConfigs={screenConfigs} />
       </div>
 
       </div> {/* end view area */}

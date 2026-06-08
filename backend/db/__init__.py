@@ -1,7 +1,11 @@
 from .engine import Base, SessionLocal, engine, get_db
-from .models import CacheMeta, ChartConfig, Preferences, Price, ScreenConfig, Watchlist, WatchlistSymbol
+from .models import (
+    AgentTask, AgentTaskRun,
+    CacheMeta, ChartConfig, Preferences, Price, ScreenConfig, Watchlist, WatchlistSymbol,
+)
 
 __all__ = [
     "Base", "SessionLocal", "engine", "get_db",
+    "AgentTask", "AgentTaskRun",
     "CacheMeta", "ChartConfig", "Preferences", "Price", "ScreenConfig", "Watchlist", "WatchlistSymbol",
 ]

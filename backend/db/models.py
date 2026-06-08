@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from .engine import Base
@@ -80,6 +80,62 @@ class ScreenConfig(Base):
     #     },
     #     ...
     #   }
+
+
+class AgentTask(Base):
+    """A user-defined periodic task (e.g. run a screener on a schedule)."""
+    __tablename__ = "agent_tasks"
+
+    id              = Column(Integer, primary_key=True, autoincrement=True)
+    name            = Column(String,  nullable=False)
+    description     = Column(String,  nullable=False, default="")
+    task_type       = Column(String,  nullable=False, default="screener")
+    # task_type-specific params, e.g.:
+    #   screener: { "screen_config_id": int, "watchlist_id": int }
+    config          = Column(JSON,    nullable=False, default=dict)
+    schedule_time   = Column(String,  nullable=False, default="09:30")  # "HH:MM" ET
+    # daily | weekdays | weekly | monthly
+    frequency       = Column(String,  nullable=False, default="weekdays")
+    day_of_week     = Column(Integer, nullable=True)   # 0=Mon..6=Sun (weekly only)
+    day_of_month    = Column(Integer, nullable=True)   # 1-28 (monthly only)
+    enabled         = Column(Boolean, nullable=False, default=True)
+    created_at      = Column(String,  nullable=False, default="")
+    last_run_at     = Column(String,  nullable=True)
+    last_run_status = Column(String,  nullable=True)   # success | error | running
+
+    # Chaining: after this task succeeds, run next_task_id immediately
+    next_task_id = Column(
+        Integer,
+        ForeignKey("agent_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    next_task = relationship(
+        "AgentTask",
+        foreign_keys=[next_task_id],
+        remote_side="AgentTask.id",
+        uselist=False,
+    )
+
+    runs = relationship(
+        "AgentTaskRun",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentTaskRun(Base):
+    """One execution record for an AgentTask."""
+    __tablename__ = "agent_task_runs"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    task_id    = Column(Integer, ForeignKey("agent_tasks.id", ondelete="CASCADE"), nullable=False)
+    started_at = Column(String,  nullable=False)
+    ended_at   = Column(String,  nullable=True)
+    status     = Column(String,  nullable=False)   # running | success | error
+    output     = Column(JSON,    nullable=True)    # task-specific result payload
+    error      = Column(String,  nullable=True)
+
+    task = relationship("AgentTask", back_populates="runs")
 
 
 class Price(Base):
