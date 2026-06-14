@@ -311,6 +311,18 @@ export default function App() {
   }, [theme, activeListId, activeChartConfigId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
+  const reloadWatchlists = useCallback(() => {
+    wlApi.getAll()
+      .then(data => {
+        setWatchlists(data.lists ?? [])
+        setActiveListId(id => {
+          const ids = (data.lists ?? []).map(l => l.id)
+          return ids.includes(id) ? id : (ids[0] ?? id)
+        })
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     wlApi.getAll()
       .then(data => {
@@ -1172,7 +1184,7 @@ export default function App() {
         display: topView === 'agent' ? 'flex' : 'none',
         height: '100%', overflow: 'hidden',
       }}>
-        <AgentPanel watchlists={watchlists} screenConfigs={screenConfigs} />
+        <AgentPanel watchlists={watchlists} screenConfigs={screenConfigs} onNewWatchlist={reloadWatchlists} />
       </div>
 
       </div> {/* end view area */}
