@@ -108,7 +108,7 @@ function Badge({ children, color = 'var(--blue)', bg = 'rgba(41,98,255,0.1)' }) 
 
 // ── AgentPanel ────────────────────────────────────────────────────────────────
 
-export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist }) {
+export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist, active }) {
   const [tasks,        setTasks]        = useState([])
   const [taskTypes,    setTaskTypes]    = useState([])      // [{key, label, description}]
   const [selectedId,   setSelectedId]   = useState(null)
@@ -137,10 +137,11 @@ export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist }) {
   }, [])
 
   useEffect(() => {
+    if (!active) return
     loadTasks()
     pollRef.current = setInterval(loadTasks, 10_000)
     return () => clearInterval(pollRef.current)
-  }, [loadTasks])
+  }, [active, loadTasks])
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 

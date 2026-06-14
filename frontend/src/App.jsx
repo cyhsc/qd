@@ -1184,7 +1184,7 @@ export default function App() {
         display: topView === 'agent' ? 'flex' : 'none',
         height: '100%', overflow: 'hidden',
       }}>
-        <AgentPanel watchlists={watchlists} screenConfigs={screenConfigs} onNewWatchlist={reloadWatchlists} />
+        <AgentPanel watchlists={watchlists} screenConfigs={screenConfigs} onNewWatchlist={reloadWatchlists} active={topView === 'agent'} />
       </div>
 
       </div> {/* end view area */}
