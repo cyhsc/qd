@@ -374,12 +374,13 @@ async def get_screen(
 ):
     sym = symbol.upper()
 
-    # Load condition overrides from the named screen config (if provided)
+    # Load condition overrides from the named screen config (if provided).
+    # Keep _logic (the AND/OR group verdict rules); only _universe is not an override.
     condition_overrides: dict = {}
     if config_id is not None:
         row = await db.get(ScreenConfig, config_id)
         if row:
-            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if not k.startswith('_')}
+            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if k != '_universe'}
 
     loop = asyncio.get_event_loop()
     try:
@@ -462,11 +463,12 @@ async def batch_screen(
     if not req.symbols:
         raise HTTPException(status_code=400, detail="No symbols provided")
 
+    # Keep _logic (the AND/OR group verdict rules); only _universe is not an override.
     condition_overrides: dict = {}
     if req.config_id is not None:
         row = await db.get(ScreenConfig, req.config_id)
         if row:
-            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if not k.startswith('_')}
+            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if k != '_universe'}
 
     loop = asyncio.get_event_loop()
     try:

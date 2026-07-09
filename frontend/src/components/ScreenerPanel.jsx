@@ -62,8 +62,8 @@ export function ScreenerPanel({
   onSaveUniverse,     // (id, {mode, list_id, symbols}) → void
   onOpenChart,        // (sym) → void
   onImportList,       // (name, symbols, onProgress) → Promise<void>
-  onToggleRule,       // (condName, defaultRole) → void
   onConditionParam,   // (condName, key, val) → void
+  onSaveLogic,        // (logic) → void
 }) {
   const [universeMode,   setUniverseMode]   = useState('watchlist')
   const [selectedListId, setSelectedListId] = useState(() =>
@@ -110,6 +110,7 @@ export function ScreenerPanel({
   const [savingList,     setSavingList]     = useState(false)
   const [saveNameInput,   setSaveNameInput]   = useState('')
   const [saveProgress,    setSaveProgress]   = useState(null)   // {done, total}
+  const [autoSave,        setAutoSave]        = useState(null)   // {name, saving, done, total, error}
   const [creatingScreener, setCreatingScreener] = useState(false)
   const [newScreenerName,  setNewScreenerName]  = useState('')
   const [renamingId,       setRenamingId]       = useState(null)
@@ -166,17 +167,37 @@ export function ScreenerPanel({
     return manualInput.split(/[\s,;]+/).map(s => s.trim().toUpperCase()).filter(Boolean)
   }, [universeMode, selectedListId, manualInput, watchlists])
 
-  // ── Results columns ────────────────────────────────────────────────────────
-  // Derive required condition column names from the first result that has conditions.
+  // ── Verdict logic (always active) ────────────────────────────────────────────
+  // Effective logic = stored _logic, or one derived from the config's required
+  // conditions (a single AND group). The derived form is behaviourally identical
+  // to the backend's legacy "AND of required conditions" so existing configs keep
+  // working until the user edits the logic.
 
+  const effectiveLogic = useMemo(() => {
+    const stored = activeConfig?.conditions?._logic
+    if (stored?.groups) return stored
+    const required = ALL_CONDITIONS.filter(n => {
+      const r = activeConfig?.conditions?.[n]?.verdict_role
+      return r !== null && r !== undefined
+    })
+    return {
+      operator: 'AND',
+      groups: [{ operator: 'AND', conditions: required }],
+    }
+  }, [activeConfig])
+
+  const logicConditionSet = useMemo(
+    () => new Set(effectiveLogic.groups.flatMap(g => g.conditions ?? [])),
+    [effectiveLogic],
+  )
+
+  // Results columns = every condition that appears in any group.
   const requiredCols = useMemo(() => {
     if (!screenData?.results?.length) return []
     const first = screenData.results.find(r => r.conditions?.length > 0)
     if (!first) return []
-    return first.conditions
-      .filter(c => c.verdict_role !== null && c.verdict_role !== undefined)
-      .map(c => c.name)
-  }, [screenData])
+    return first.conditions.map(c => c.name).filter(n => logicConditionSet.has(n))
+  }, [screenData, logicConditionSet])
 
   // Sort results: passed first, failed next, errored last
   const sortedResults = useMemo(() => {
@@ -189,11 +210,23 @@ export function ScreenerPanel({
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
+  // Compose the auto-save watchlist name: YYYY-MM-DD-[screener name]-[watch list name]
+  function autoSaveName() {
+    const d    = new Date()
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const screener  = (activeConfig?.name ?? 'screen').trim()
+    const universe  = universeMode === 'watchlist'
+      ? (watchlists.find(l => String(l.id) === String(selectedListId))?.name ?? 'watchlist').trim()
+      : 'manual'
+    return `${date}-${screener}-${universe}`
+  }
+
   async function handleRun() {
     if (!symbols.length || running) return
     setRunning(true)
     setScreenData(null)
     setRunError(null)
+    setAutoSave(null)
     try {
       const res = await fetch('/api/stocks/screen/batch', {
         method: 'POST',
@@ -204,7 +237,23 @@ export function ScreenerPanel({
         const err = await res.json().catch(() => ({}))
         throw new Error(err.detail ?? `HTTP ${res.status}`)
       }
-      setScreenData(await res.json())
+      const data = await res.json()
+      setScreenData(data)
+
+      // Auto-save the passing symbols to a dated watchlist
+      const passed = data.passed ?? []
+      if (passed.length) {
+        const name = autoSaveName()
+        setAutoSave({ name, saving: true, done: 0, total: passed.length, error: null })
+        try {
+          await onImportList(name, passed, (done, total) =>
+            setAutoSave(prev => prev && { ...prev, done, total })
+          )
+          setAutoSave(prev => prev && { ...prev, saving: false })
+        } catch (e) {
+          setAutoSave(prev => prev && { ...prev, saving: false, error: e.message || 'Save failed' })
+        }
+      }
     } catch (e) {
       setRunError(e.message)
     } finally {
@@ -403,39 +452,44 @@ export function ScreenerPanel({
           )}
         </div>
 
+        {/* Logic section */}
+        <SectionLabel text="VERDICT LOGIC" />
+        <div style={{ padding: '0 14px 10px', flexShrink: 0 }}>
+          <LogicBuilder
+            logic={effectiveLogic}
+            allConditions={ALL_CONDITIONS}
+            onChange={onSaveLogic}
+          />
+        </div>
+
         {/* Conditions section — scrolls independently so button is never hidden */}
         <SectionLabel text="CONDITIONS" />
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 8px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {ALL_CONDITIONS.map(name => {
                 const cfg   = configConditions[name] ?? { verdict_role: null }
-                const role  = 'verdict_role' in cfg ? cfg.verdict_role : null
-                const isReq = role !== null && role !== undefined
                 const isParametric = PARAMETRIC_CONDITIONS.includes(name)
                 const p     = cfg ?? {}
+                const inGroup = logicConditionSet.has(name)
                 return (
                   <div key={name} style={{
                     padding: '6px 8px', borderRadius: '5px',
                     background: 'var(--bg-raised)',
-                    border: '1px solid var(--border)',
+                    border: `1px solid ${inGroup ? 'rgba(41,98,255,0.35)' : 'var(--border)'}`,
                   }}>
-                    {/* Row 1: toggle + name */}
+                    {/* Row 1: group-membership badge + name */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                      <button
-                        onClick={() => onToggleRule(name, cfg.verdict_role ?? null)}
-                        title={isReq ? 'Click to make optional' : 'Click to make required'}
-                        style={{
-                          flexShrink: 0,
-                          fontSize: '9px', fontWeight: 700, padding: '2px 5px',
-                          borderRadius: '3px', border: 'none', cursor: 'pointer',
-                          letterSpacing: '0.04em', textTransform: 'uppercase',
-                          background: isReq ? 'rgba(41,98,255,0.15)' : 'rgba(120,123,134,0.12)',
-                          color: isReq ? 'var(--blue)' : 'var(--text-muted)',
-                          minWidth: '52px', textAlign: 'center',
-                        }}
-                      >
-                        {isReq ? 'required' : 'optional'}
-                      </button>
+                      <span style={{
+                        flexShrink: 0,
+                        fontSize: '9px', fontWeight: 700, padding: '2px 5px',
+                        borderRadius: '3px',
+                        letterSpacing: '0.04em', textTransform: 'uppercase',
+                        background: inGroup ? 'rgba(41,98,255,0.15)' : 'rgba(120,123,134,0.08)',
+                        color: inGroup ? 'var(--blue)' : 'var(--text-muted)',
+                        minWidth: '52px', textAlign: 'center',
+                      }}>
+                        {inGroup ? 'in group' : 'unused'}
+                      </span>
                       <span style={{
                         fontSize: '11px', fontFamily: 'var(--font-mono)',
                         color: 'var(--text-primary)', fontWeight: 600,
@@ -462,7 +516,7 @@ export function ScreenerPanel({
                         >
                           <option value="gt">&gt;</option>
                           <option value="eq">=</option>
-                          <option value="lt">&lt;</option>
+                          <option value="lt" title="active streak shorter than threshold">1≤n&lt;</option>
                         </select>
                         <input
                           type="number"
@@ -531,6 +585,17 @@ export function ScreenerPanel({
                 {erroredCount > 0 && (
                   <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                     · {erroredCount} error{erroredCount !== 1 ? 's' : ''}
+                  </span>
+                )}
+
+                {/* Auto-save status */}
+                {autoSave && (
+                  <span style={{ fontSize: '11px', color: autoSave.error ? 'var(--red)' : 'var(--text-muted)' }}>
+                    {autoSave.error
+                      ? `Auto-save failed: ${autoSave.error}`
+                      : autoSave.saving
+                        ? `Saving to ${autoSave.name}… ${autoSave.done}/${autoSave.total}`
+                        : `✓ Saved to ${autoSave.name}`}
                   </span>
                 )}
 
@@ -669,6 +734,151 @@ export function ScreenerPanel({
             </table>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ── LogicBuilder ──────────────────────────────────────────────────────────────
+
+function LogicBuilder({ logic, allConditions, onChange }) {
+  function setTopOp(op) {
+    onChange({ ...logic, operator: op })
+  }
+
+  function setGroupOp(gi, op) {
+    const groups = logic.groups.map((g, i) => i !== gi ? g : { ...g, operator: op })
+    onChange({ ...logic, groups })
+  }
+
+  function addGroup() {
+    onChange({ ...logic, groups: [...logic.groups, { operator: 'AND', conditions: [] }] })
+  }
+
+  function removeGroup(gi) {
+    // Always keep at least one group so logic mode is never empty
+    const groups = logic.groups.filter((_, i) => i !== gi)
+    onChange({ ...logic, groups: groups.length ? groups : [{ operator: 'AND', conditions: [] }] })
+  }
+
+  function addCondToGroup(gi, cond) {
+    if (!cond) return
+    const groups = logic.groups.map((g, i) =>
+      i !== gi || g.conditions.includes(cond) ? g : { ...g, conditions: [...g.conditions, cond] }
+    )
+    onChange({ ...logic, groups })
+  }
+
+  function removeCondFromGroup(gi, cond) {
+    const groups = logic.groups.map((g, i) =>
+      i !== gi ? g : { ...g, conditions: g.conditions.filter(c => c !== cond) }
+    )
+    onChange({ ...logic, groups })
+  }
+
+  const btnBase = {
+    height: '22px', padding: '0 8px', fontSize: '10px', fontWeight: 600,
+    border: '1px solid var(--border)', borderRadius: '3px', cursor: 'pointer',
+    letterSpacing: '0.04em',
+  }
+  const opBtn = (active) => ({
+    ...btnBase,
+    background: active ? 'var(--blue)' : 'var(--bg-panel)',
+    color: active ? '#fff' : 'var(--text-muted)',
+    borderColor: active ? 'var(--blue)' : 'var(--border)',
+  })
+
+  const multiGroup = logic.groups.length > 1
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {/* Top-level operator — only relevant with more than one group */}
+      {multiGroup && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>Combine groups with</span>
+          <button style={opBtn(logic.operator === 'AND')} onClick={() => setTopOp('AND')}>AND</button>
+          <button style={opBtn(logic.operator === 'OR')}  onClick={() => setTopOp('OR')}>OR</button>
+        </div>
+      )}
+
+      {/* Groups */}
+      {logic.groups.map((group, gi) => (
+        <div key={gi} style={{
+          padding: '6px 8px', borderRadius: '5px',
+          background: 'var(--bg-panel)', border: '1px solid var(--border)',
+        }}>
+          {/* Group header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px' }}>
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>
+              Group {gi + 1}
+            </span>
+            <button style={opBtn(group.operator === 'AND')} onClick={() => setGroupOp(gi, 'AND')}>AND</button>
+            <button style={opBtn(group.operator === 'OR')}  onClick={() => setGroupOp(gi, 'OR')}>OR</button>
+            <button
+              onClick={() => removeGroup(gi)}
+              title="Remove group"
+              style={{ ...btnBase, marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '13px' }}
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* Condition chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginBottom: '5px' }}>
+            {group.conditions.map(cond => (
+              <span key={cond} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '3px',
+                padding: '2px 6px', borderRadius: '3px', fontSize: '10px',
+                background: 'rgba(41,98,255,0.12)', color: 'var(--blue)',
+                fontFamily: 'var(--font-mono)', fontWeight: 600,
+              }}>
+                {COND_META[cond]?.short ?? cond}
+                <button
+                  onClick={() => removeCondFromGroup(gi, cond)}
+                  style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: '11px', padding: '0', lineHeight: 1 }}
+                >✕</button>
+              </span>
+            ))}
+          </div>
+
+          {/* Add condition dropdown */}
+          <select
+            value=""
+            onChange={e => { addCondToGroup(gi, e.target.value); e.target.value = '' }}
+            style={{
+              width: '100%', height: '22px', padding: '0 4px', fontSize: '10px',
+              background: 'var(--bg-raised)', border: '1px solid var(--border)',
+              borderRadius: '3px', color: 'var(--text-muted)', cursor: 'pointer', outline: 'none',
+            }}
+          >
+            <option value="">+ add condition…</option>
+            {allConditions
+              .filter(c => !group.conditions.includes(c))
+              .map(c => (
+                <option key={c} value={c}>
+                  {COND_META[c]?.short ?? c} — {COND_META[c]?.label ?? c}
+                </option>
+              ))
+            }
+          </select>
+        </div>
+      ))}
+
+      {/* Add group button */}
+      <button
+        onClick={addGroup}
+        style={{
+          ...btnBase,
+          alignSelf: 'flex-start',
+          background: 'var(--bg-panel)',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        + Add group
+      </button>
+
+      <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+        Conditions not in any group are ignored for the verdict.
       </div>
     </div>
   )

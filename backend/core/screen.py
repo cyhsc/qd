@@ -217,6 +217,51 @@ def _build_report(result: ScreenResult) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Logic evaluation
+# ---------------------------------------------------------------------------
+
+def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> bool:
+    """
+    Evaluate verdict using optional AND/OR group logic.
+
+    If logic is None or has no groups, falls back to: AND all conditions
+    whose verdict_role is not None.
+
+    logic shape:
+      {
+        "operator": "AND" | "OR",   // how to combine groups (default AND)
+        "groups": [
+          { "operator": "AND" | "OR", "conditions": ["cond_name", ...] },
+          ...
+        ]
+      }
+    """
+    if not logic or not logic.get("groups"):
+        return all(
+            c.passed == c.verdict_role
+            for c in cond_results
+            if c.verdict_role is not None
+        )
+
+    result_map = {c.name: c.passed for c in cond_results}
+    groups     = logic.get("groups", [])
+    top_op     = logic.get("operator", "AND").upper()
+
+    group_verdicts = []
+    for group in groups:
+        names    = group.get("conditions", [])
+        group_op = group.get("operator", "AND").upper()
+        if not names:
+            continue
+        values = [result_map.get(n, False) for n in names]
+        group_verdicts.append(all(values) if group_op == "AND" else any(values))
+
+    if not group_verdicts:
+        return True
+    return all(group_verdicts) if top_op == "AND" else any(group_verdicts)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -279,8 +324,8 @@ def screen_individual(
             effective_verdict_rules[name] = ov["verdict_role"]
 
     # ── Build dynamic parametric condition descriptions and fns ──────────
-    _op_symbol = {"gt": ">", "eq": "=", "lt": "<"}
-    _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "less than"}
+    _op_symbol = {"gt": ">", "eq": "=", "lt": "1≤n<"}
+    _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "at least 1 but less than"}
 
     _PARAMETRIC = {
         "sqz_consecutive_positive_bars": {
@@ -335,7 +380,10 @@ def screen_individual(
                 n = vfn(m, r, s)
                 if o == "gt": return n > t
                 if o == "eq": return n == t
-                if o == "lt": return n < t
+                # "lt" requires an active streak: a count of 0 means the
+                # condition isn't currently true at all (e.g. fast_width is
+                # negative), which should NOT pass "fewer than t bars".
+                if o == "lt": return 0 < n < t
                 return False
             return _fn
         _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op)
@@ -353,12 +401,9 @@ def screen_individual(
 
     score = sum(c.passed for c in conditions)
 
-    # Verdict: every rule condition must match its required value
-    verdict = all(
-        c.passed == c.verdict_role
-        for c in conditions
-        if c.verdict_role is not None
-    )
+    # Verdict: use _logic groups if provided, otherwise flat AND of all required conditions
+    logic = overrides.get("_logic")
+    verdict = _evaluate_logic(conditions, logic)
 
     result = ScreenResult(
         symbol=sym,

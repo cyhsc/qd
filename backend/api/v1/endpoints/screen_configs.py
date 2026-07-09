@@ -24,7 +24,7 @@ class ScreenConfigBody(BaseModel):
 
 class ConditionPatch(BaseModel):
     condition_name: str
-    settings: dict  # keys: verdict_role, threshold, op (any subset)
+    settings: dict | None  # None = delete the key; dict = merge into existing
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +88,13 @@ async def patch_condition(config_id: int, body: ConditionPatch, db: AsyncSession
     if not row:
         raise HTTPException(status_code=404, detail="Screen config not found")
     conditions = dict(row.conditions or {})
-    conditions[body.condition_name] = {
-        **(conditions.get(body.condition_name) or {}),
-        **body.settings,
-    }
+    if body.settings is None:
+        conditions.pop(body.condition_name, None)
+    else:
+        conditions[body.condition_name] = {
+            **(conditions.get(body.condition_name) or {}),
+            **body.settings,
+        }
     row.conditions = conditions
     flag_modified(row, "conditions")   # tell SQLAlchemy the JSON column changed
     await db.commit()

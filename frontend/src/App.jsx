@@ -349,12 +349,14 @@ export default function App() {
 
   // ── Screener config management ────────────────────────────────────────────
 
-  // All conditions available in the analysis engine, seeded as optional (verdict_role: null).
-  // Parametric conditions also get their default threshold / op.
+  // Conditions seeded when creating a new screener.
+  // Backend default required conditions (matching _VERDICT_RULES in screen.py) start as true
+  // so they're active immediately. All others default to null (informational).
+  // Parametric conditions also include their default threshold / op.
   const DEFAULT_SCREENER_CONDITIONS = {
-    // RWB
-    rwb_gap_positive:                         { verdict_role: null },
-    rwb_gap_rising:                           { verdict_role: null },
+    // RWB — rwb_gap_positive and rwb_gap_rising are required by default
+    rwb_gap_positive:                         { verdict_role: true },
+    rwb_gap_rising:                           { verdict_role: true },
     rwb_slow_width_rising:                    { verdict_role: null },
     rwb_fast_above_slow:                      { verdict_role: null },
     rwb_bars_since_fast_above_slow:           { verdict_role: null, threshold: 3, op: 'gt' },
@@ -362,17 +364,17 @@ export default function App() {
     rwb_fast_width_consecutive_positive_bars: { verdict_role: null, threshold: 3, op: 'gt' },
     rwb_slow_width_consecutive_rising_bars:   { verdict_role: null, threshold: 3, op: 'gt' },
     rwb_fast_width_consecutive_rising_bars:   { verdict_role: null, threshold: 3, op: 'gt' },
-    // MACD
-    macd_line_positive:                       { verdict_role: null },
+    // MACD — macd_line_positive and macd_histogram_positive are required by default
+    macd_line_positive:                       { verdict_role: true },
     macd_line_rising:                         { verdict_role: null },
-    macd_histogram_positive:                  { verdict_role: null },
+    macd_histogram_positive:                  { verdict_role: true },
     macd_histogram_rising:                    { verdict_role: null },
     macd_signal_positive:                     { verdict_role: null },
     macd_histogram_consecutive_positive_bars: { verdict_role: null, threshold: 3, op: 'gt' },
-    // SQZ
-    sqz_momentum_positive:                    { verdict_role: null },
+    // SQZ — sqz_momentum_positive and sqz_not_on are required by default
+    sqz_momentum_positive:                    { verdict_role: true },
     sqz_momentum_rising:                      { verdict_role: null },
-    sqz_not_on:                               { verdict_role: null },
+    sqz_not_on:                               { verdict_role: true },
     sqz_consecutive_positive_bars:            { verdict_role: null, threshold: 3, op: 'gt' },
   }
 
@@ -669,6 +671,25 @@ export default function App() {
     patchCondition(conditionName, { [key]: value })
   }, [patchCondition])
 
+  const handleSaveLogic = useCallback((logic) => {
+    if (activeConfigId == null) return
+    // Optimistic local update
+    setScreenConfigs(prev => prev.map(cfg => {
+      if (cfg.id !== activeConfigId) return cfg
+      if (logic === null) {
+        const { _logic, ...rest } = cfg.conditions ?? {}
+        return { ...cfg, conditions: rest }
+      }
+      return { ...cfg, conditions: { ...cfg.conditions, _logic: logic } }
+    }))
+    // Persist: settings=null removes the key; settings=dict merges it in
+    fetch(`/api/screen-configs/${activeConfigId}/conditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ condition_name: '_logic', settings: logic }),
+    }).catch(() => {})
+  }, [activeConfigId])
+
   const handleAnalysis = useCallback(async () => {
     const sym = symbol || input.trim().toUpperCase()
     if (!sym) return
@@ -796,6 +817,27 @@ export default function App() {
     }
     await wlApi.deleteSymbol(listId, sym)
   }, [symbol])
+
+  // Add one symbol to one or more OTHER existing lists. Returns per-list results
+  // so the caller (modal) can report added / already-there / failed for each.
+  const handleCopySymbolToLists = useCallback(async (targetListIds, sym, name) => {
+    const results = await Promise.all(targetListIds.map(async id => {
+      try {
+        const res = await wlApi.addSymbol(id, sym, name || sym)
+        return { id, ok: res.ok, duplicate: res.status === 409 }
+      } catch {
+        return { id, ok: false, duplicate: false }
+      }
+    }))
+    // Optimistically update every list that actually got a new symbol
+    const added = new Set(results.filter(r => r.ok).map(r => r.id))
+    if (added.size) {
+      setWatchlists(prev => prev.map(l =>
+        added.has(l.id) ? { ...l, symbols: [...l.symbols, { symbol: sym, name: name || sym }] } : l
+      ))
+    }
+    return results
+  }, [])
 
   const handleReorderSymbols = useCallback((listId, symbols) => {
     // Optimistic local update
@@ -952,6 +994,7 @@ export default function App() {
           onDeleteList={handleDeleteList}
           onSelectSymbol={selectSymbol}
           onDeleteSymbol={handleDeleteSymbol}
+          onCopySymbol={handleCopySymbolToLists}
           onAddSymbol={handleAddSymbol}
           onReorderSymbols={handleReorderSymbols}
         />
@@ -1162,8 +1205,8 @@ export default function App() {
           onSaveUniverse={handleSaveUniverse}
           onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
           onImportList={handleImportList}
-          onToggleRule={handleToggleRule}
           onConditionParam={handleConditionParam}
+          onSaveLogic={handleSaveLogic}
         />
       </div> {/* end Screener view */}
 

@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 
 // ── SymbolRow ─────────────────────────────────────────────────────────────────
 
-function SymbolRow({ symbol, name, active, onClick, onDelete, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }) {
+function SymbolRow({ symbol, name, active, onClick, onDelete, onCopy, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }) {
   const [hovered, setHovered] = useState(false)
   return (
     <div
@@ -40,16 +40,35 @@ function SymbolRow({ symbol, name, active, onClick, onDelete, onDragStart, onDra
         )}
       </div>
       {(hovered || active) && (
-        <button
-          onClick={e => { e.stopPropagation(); onDelete() }}
-          style={{
-            background: 'none', border: 'none', flexShrink: 0,
-            color: 'var(--text-muted)', fontSize: '14px',
-            cursor: 'pointer', padding: '0 2px', lineHeight: 1,
-          }}
-        >
-          ×
-        </button>
+        <>
+          <button
+            onClick={e => { e.stopPropagation(); onCopy() }}
+            title="Add to another watchlist"
+            style={{
+              background: 'none', border: 'none', flexShrink: 0,
+              color: 'var(--text-muted)', cursor: 'pointer',
+              padding: '0 2px', lineHeight: 1,
+              display: 'flex', alignItems: 'center',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="11" height="11" rx="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+          <button
+            onClick={e => { e.stopPropagation(); onDelete() }}
+            title="Remove from list"
+            style={{
+              background: 'none', border: 'none', flexShrink: 0,
+              color: 'var(--text-muted)', fontSize: '14px',
+              cursor: 'pointer', padding: '0 2px', lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </>
       )}
     </div>
   )
@@ -68,6 +87,160 @@ function IconUpload() {
   )
 }
 
+function IconDownload() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+  )
+}
+
+// ── AddToListsModal ─────────────────────────────────────────────────────────
+
+function AddToListsModal({ target, lists, activeListId, onCopySymbol, onClose }) {
+  // Candidate lists = every list except the one the symbol is already viewed in
+  const candidates = lists.filter(l => l.id !== activeListId)
+  const [selected, setSelected] = useState(() => new Set())
+  const [busy, setBusy]         = useState(false)
+  const [results, setResults]   = useState(null)  // { [listId]: 'added'|'duplicate'|'failed' }
+
+  const alreadyIn = (l) => l.symbols.some(s => s.symbol === target.symbol)
+
+  const toggle = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleAdd = async () => {
+    if (!selected.size) return
+    setBusy(true)
+    const res = await onCopySymbol([...selected], target.symbol, target.name)
+    const map = {}
+    for (const r of res) map[r.id] = r.ok ? 'added' : r.duplicate ? 'duplicate' : 'failed'
+    setResults(map)
+    setBusy(false)
+    // Auto-close if everything succeeded
+    if (res.every(r => r.ok)) setTimeout(onClose, 700)
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '320px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+          background: 'var(--bg-panel)', border: '1px solid var(--border)',
+          borderRadius: '8px', overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          padding: '12px 14px', borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            Add <span style={{ color: 'var(--blue)' }}>{target.symbol}</span> to…
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none', border: 'none', color: 'var(--text-muted)',
+              fontSize: '18px', lineHeight: 1, cursor: 'pointer', padding: '0 2px',
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* List body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
+          {candidates.length === 0 ? (
+            <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+              No other lists — create one first.
+            </div>
+          ) : candidates.map(l => {
+            const has     = alreadyIn(l)
+            const result  = results?.[l.id]
+            const checked = selected.has(l.id)
+            const disabled = has || busy
+            return (
+              <label
+                key={l.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  padding: '8px 14px', fontSize: '12px',
+                  cursor: disabled ? 'default' : 'pointer',
+                  color: disabled ? 'var(--text-muted)' : 'var(--text-primary)',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked && !has}
+                  disabled={disabled}
+                  onChange={() => toggle(l.id)}
+                  style={{ cursor: disabled ? 'default' : 'pointer' }}
+                />
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {l.name}
+                </span>
+                {result === 'added'     && <span style={{ color: 'var(--green)', fontSize: '11px' }}>✓ added</span>}
+                {result === 'duplicate' && <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>already there</span>}
+                {result === 'failed'    && <span style={{ color: 'var(--red)', fontSize: '11px' }}>failed</span>}
+                {!result && has         && <span style={{ fontSize: '11px' }}>already in list</span>}
+              </label>
+            )
+          })}
+        </div>
+
+        {/* Footer */}
+        {candidates.length > 0 && (
+          <div style={{
+            padding: '10px 14px', borderTop: '1px solid var(--border)',
+            display: 'flex', justifyContent: 'flex-end', gap: '8px',
+          }}>
+            <button
+              onClick={onClose}
+              style={{
+                height: '28px', padding: '0 12px',
+                background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                borderRadius: '4px', color: 'var(--text-primary)', fontSize: '12px', cursor: 'pointer',
+              }}
+            >
+              Close
+            </button>
+            <button
+              onClick={handleAdd}
+              disabled={busy || selected.size === 0}
+              style={{
+                height: '28px', padding: '0 12px',
+                background: 'var(--blue)', border: 'none',
+                borderRadius: '4px', color: '#fff', fontSize: '12px', fontWeight: 600,
+                cursor: (busy || selected.size === 0) ? 'not-allowed' : 'pointer',
+                opacity: (busy || selected.size === 0) ? 0.5 : 1,
+              }}
+            >
+              {busy ? 'Adding…' : `Add${selected.size ? ` (${selected.size})` : ''}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 
 export function Watchlist({
@@ -82,6 +255,7 @@ export function Watchlist({
   onDeleteList,
   onSelectSymbol,
   onDeleteSymbol,
+  onCopySymbol,       // async (targetListIds[], symbol, name) → results[]
   onAddSymbol,        // async (listId, symbol) → { ok, error? }
   onReorderSymbols,   // (listId, symbols[]) → void
 }) {
@@ -98,6 +272,9 @@ export function Watchlist({
   // Drag-and-drop reorder state
   const dragIndexRef  = useRef(null)  // index of the row being dragged
   const [dragOverIndex, setDragOverIndex] = useState(null)
+
+  // "Add to another watchlist" modal target: { symbol, name } | null
+  const [copyTarget, setCopyTarget] = useState(null)
 
   const activeList = lists.find(l => l.id === activeListId)
 
@@ -166,6 +343,21 @@ export function Watchlist({
     setTimeout(() => setImportProgress(null), 2000)
   }
 
+  // ── Export to file ────────────────────────────────────────────────────────
+
+  const handleExport = () => {
+    if (!activeList?.symbols.length) return
+    // One symbol per line — same format the importer reads back
+    const text = activeList.symbols.map(s => s.symbol).join('\n') + '\n'
+    const blob = new Blob([text], { type: 'text/plain' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `${activeList.name}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   const importing = importProgress !== null
@@ -195,11 +387,12 @@ export function Watchlist({
             value={activeListId ?? ''}
             onChange={e => onSelectList(e.target.value)}
             style={{
-              flex: 1, height: '28px',
+              flex: 1, minWidth: 0, height: '28px',
               background: 'var(--bg-raised)', border: '1px solid var(--border)',
               borderRadius: '4px', padding: '0 6px',
               color: 'var(--text-primary)', fontSize: '12px',
               cursor: 'pointer', outline: 'none',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >
             {lists.map(list => (
@@ -213,7 +406,7 @@ export function Watchlist({
               onClick={() => onDeleteList(activeListId)}
               title="Delete list"
               style={{
-                background: 'none', border: 'none',
+                background: 'none', border: 'none', flexShrink: 0,
                 color: 'var(--text-muted)', fontSize: '16px',
                 cursor: 'pointer', padding: '0 3px', lineHeight: 1,
               }}
@@ -228,7 +421,7 @@ export function Watchlist({
             title="Import list from .txt file"
             disabled={importing}
             style={{
-              background: 'none', border: 'none',
+              background: 'none', border: 'none', flexShrink: 0,
               color: 'var(--text-muted)',
               cursor: importing ? 'not-allowed' : 'pointer',
               padding: '2px 3px', lineHeight: 1,
@@ -239,12 +432,29 @@ export function Watchlist({
             <IconUpload />
           </button>
 
+          {/* Export to file */}
+          <button
+            onClick={handleExport}
+            title="Export list to .txt file"
+            disabled={!activeList?.symbols.length}
+            style={{
+              background: 'none', border: 'none', flexShrink: 0,
+              color: 'var(--text-muted)',
+              cursor: activeList?.symbols.length ? 'pointer' : 'not-allowed',
+              padding: '2px 3px', lineHeight: 1,
+              display: 'flex', alignItems: 'center',
+              opacity: activeList?.symbols.length ? 1 : 0.4,
+            }}
+          >
+            <IconDownload />
+          </button>
+
           {/* New list */}
           <button
             onClick={() => { setCreatingList(v => !v); setListNameInput('') }}
             title="New list"
             style={{
-              background: 'none', border: 'none',
+              background: 'none', border: 'none', flexShrink: 0,
               color: creatingList ? 'var(--text-primary)' : 'var(--text-muted)',
               fontSize: '18px', lineHeight: 1, cursor: 'pointer', padding: '0 2px',
             }}
@@ -304,6 +514,7 @@ export function Watchlist({
             isDragOver={dragOverIndex === index}
             onClick={() => onSelectSymbol(symbol)}
             onDelete={() => onDeleteSymbol(activeListId, symbol)}
+            onCopy={() => setCopyTarget({ symbol, name })}
             onDragStart={(e) => {
               dragIndexRef.current = index
               e.dataTransfer.effectAllowed = 'move'
@@ -412,6 +623,17 @@ export function Watchlist({
             </button>
           </form>
         </div>
+      )}
+
+      {/* ── Add-to-another-list modal ── */}
+      {copyTarget && (
+        <AddToListsModal
+          target={copyTarget}
+          lists={lists}
+          activeListId={activeListId}
+          onCopySymbol={onCopySymbol}
+          onClose={() => setCopyTarget(null)}
+        />
       )}
     </div>
   )
