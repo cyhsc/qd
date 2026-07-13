@@ -19,7 +19,7 @@ const THEME = {
 
 // ── Indicator chart (canvas) ──────────────────────────────────────────────────
 
-function IndicatorChart({ title, symbol, years = 3, theme = 'light', fixedMin, fixedMax, bandHigh, bandLow, syncDate, onSyncDate }) {
+function IndicatorChart({ title, symbol, years = 3, theme = 'light', fixedMin, fixedMax, bandHigh, bandLow, autoRange = false, syncDate, onSyncDate }) {
   const containerRef  = useRef(null)
   const canvasRef     = useRef(null)
   const dataRef       = useRef([])          // [{date, value}]
@@ -86,6 +86,13 @@ function IndicatorChart({ title, symbol, years = 3, theme = 'light', fixedMin, f
     if (hasFixed) {
       lo = fMin
       hi = fMax
+    } else if (autoRange) {
+      // Scale purely to the visible data (e.g. $VIX)
+      const minV = Math.min(...visible.map(d => d.value))
+      const maxV = Math.max(...visible.map(d => d.value))
+      const pad  = (maxV - minV) * 0.05 || 1
+      lo = minV - pad
+      hi = maxV + pad
     } else {
       const minV = Math.min(...visible.map(d => d.value), OS_LEVEL - 10)
       const maxV = Math.max(...visible.map(d => d.value), OB_LEVEL + 10)
@@ -106,7 +113,7 @@ function IndicatorChart({ title, symbol, years = 3, theme = 'light', fixedMin, f
     // Overbought / oversold bands
     const { bandHigh: bHigh, bandLow: bLow } = bandRef.current
     const hasBands = bHigh != null && bLow != null
-    if (!hasFixed && !hasBands) {
+    if (!hasFixed && !hasBands && !autoRange) {
       // NYMO default bands
       const obY = toY(OB_LEVEL), osY = toY(OS_LEVEL)
       ctx.fillStyle = COL_OB
@@ -130,15 +137,21 @@ function IndicatorChart({ title, symbol, years = 3, theme = 'light', fixedMin, f
           { v: (fMin + fMax) / 2,  label: String((fMin + fMax) / 2) },
           { v: fMin,               label: String(fMin) },
         ]
+      : autoRange
+      ? (hasBands ? [
+          { v: bHigh, label: String(bHigh) },
+          { v: bLow,  label: String(bLow)  },
+        ] : [])
       : [
           { v: obLevel, label: String(obLevel) },
           { v: 0,       label: '0' },
           { v: osLevel, label: String(osLevel) },
         ]
-    const midRef = hasFixed ? (fMin + fMax) / 2 : 0
+    const midRef = hasFixed ? (fMin + fMax) / 2 : autoRange ? null : 0
     ctx.font      = `10px var(--font-mono, 'Courier New', monospace)`
     ctx.textAlign = 'left'
     for (const { v, label } of refLines) {
+      if (v < lo || v > hi) continue   // off-scale under autoRange
       const isMid = v === midRef
       const y = Math.round(toY(v)) + 0.5
       ctx.strokeStyle = isMid ? t.zero : t.axis
@@ -900,6 +913,18 @@ export function MarketPanel({ theme = 'light' }) {
           fixedMin={0}
           fixedMax={100}
           bandHigh={80}
+          bandLow={20}
+          syncDate={syncDate}
+          onSyncDate={setSyncDate}
+        />
+        <div style={{ width: '1px', background: 'var(--border)', flexShrink: 0 }} />
+        <IndicatorChart
+          title="$VIX — Volatility Index"
+          symbol="$VIX"
+          years={2}
+          theme={theme}
+          autoRange
+          bandHigh={30}
           bandLow={20}
           syncDate={syncDate}
           onSyncDate={setSyncDate}

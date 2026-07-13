@@ -15,6 +15,8 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
+from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh
+
 logger = logging.getLogger(__name__)
 
 # Same file the async engine points at
@@ -50,7 +52,11 @@ def _is_fresh(con: sqlite3.Connection, sym: str, interval: str, ttl: int) -> boo
         "SELECT fetched_at FROM cache_meta WHERE symbol=? AND interval=?",
         (sym, interval),
     ).fetchone()
-    return row is not None and (time.time() - row[0]) < ttl
+    if row is None:
+        return False
+    if interval in DAILY_INTERVALS:
+        return daily_cache_is_fresh(row[0], ttl)
+    return (time.time() - row[0]) < ttl
 
 
 def _read_rows(con: sqlite3.Connection, sym: str, interval: str) -> pd.DataFrame:

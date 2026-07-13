@@ -13,6 +13,7 @@ import pandas as pd
 
 from pydantic import BaseModel
 
+from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
 from core.screen import screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
@@ -118,7 +119,10 @@ async def read_cached_prices(db: AsyncSession, symbol: str, interval: str) -> li
     if meta is None:
         return None
     ttl = CACHE_TTL.get(interval, 3600)
-    if time.time() - meta.fetched_at > ttl:
+    if interval in DAILY_INTERVALS:
+        if not daily_cache_is_fresh(meta.fetched_at, ttl):
+            return None
+    elif time.time() - meta.fetched_at > ttl:
         return None
     rows = (await db.execute(
         select(Price)
