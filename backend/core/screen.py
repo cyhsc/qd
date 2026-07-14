@@ -48,6 +48,10 @@ _CONDITIONS: dict[str, dict] = {
         "description": "RWB slow_width rising — long-term EMA cluster is fanning out (trend strengthening)",
         "fn": lambda m, r, s: r.slow_width.slope == Slope.RISING,
     },
+    "rwb_fast_width_rising": {
+        "description": "RWB fast_width rising — short-term EMA cluster is fanning out (momentum building)",
+        "fn": lambda m, r, s: r.fast_width.slope == Slope.RISING,
+    },
     "rwb_fast_above_slow": {
         "description": "RWB fast_width > slow_width — short-term cluster more dynamic than long-term",
         "fn": lambda m, r, s: r.fast_width_above_slow_width,

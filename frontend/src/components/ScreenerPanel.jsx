@@ -6,6 +6,7 @@ const COND_META = {
   rwb_gap_positive:                         { short: 'RWB+',   label: 'RWB gap positive'          },
   rwb_gap_rising:                           { short: 'RWB↑',   label: 'RWB gap rising'            },
   rwb_slow_width_rising:                    { short: 'SW↑',    label: 'RWB slow-width rising'     },
+  rwb_fast_width_rising:                    { short: 'FW↑',    label: 'RWB fast-width rising'     },
   rwb_fast_above_slow:                      { short: 'F>S',    label: 'Fast width > slow width'   },
   rwb_bars_since_fast_above_slow:           { short: 'BFS-N',  label: 'Bars since fast>slow'      },
   rwb_slow_width_consecutive_positive_bars: { short: 'SW-P',   label: 'Slow-width conseq. +'      },
@@ -26,7 +27,8 @@ const COND_META = {
 
 // Ordered list of every condition the analysis engine supports
 const ALL_CONDITIONS = [
-  'rwb_gap_positive', 'rwb_gap_rising', 'rwb_slow_width_rising', 'rwb_fast_above_slow',
+  'rwb_gap_positive', 'rwb_gap_rising', 'rwb_slow_width_rising', 'rwb_fast_width_rising',
+  'rwb_fast_above_slow',
   'rwb_bars_since_fast_above_slow', 'rwb_slow_width_consecutive_positive_bars',
   'rwb_fast_width_consecutive_positive_bars', 'rwb_slow_width_consecutive_rising_bars',
   'rwb_fast_width_consecutive_rising_bars',
