@@ -116,6 +116,7 @@ export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist, active }
   const [editingTask,  setEditingTask]  = useState(null)
   const [triggering,   setTriggering]   = useState(null)
   const pollRef = useRef(null)
+  const prevRunAtRef = useRef({})   // task.id -> last_run_at seen on the previous poll
 
   // ── Load task types (once) ──────────────────────────────────────────────────
 
@@ -133,8 +134,28 @@ export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist, active }
       const res  = await fetch('/api/agent-tasks')
       const data = await res.json()
       setTasks(data)
-    } catch { /* silently */ }
-  }, [])
+
+      // When a task that saves a watchlist finishes a run, refresh the
+      // watchlist sidebar so the new list shows up without a manual browser
+      // reload. Both manual (/trigger) and scheduled runs surface here as
+      // last_run_at advancing with a success status. Skip the first sighting
+      // of each task (prev === undefined) so existing runs don't refire.
+      let refreshWatchlists = false
+      const seen = prevRunAtRef.current
+      for (const t of data) {
+        const prev = seen[t.id]
+        seen[t.id] = t.last_run_at
+        const producesWatchlist = t.task_type === 'finviz_screen' && t.config?.save_watchlist
+        if (producesWatchlist && t.last_run_status === 'success'
+            && t.last_run_at && prev !== undefined && t.last_run_at !== prev) {
+          refreshWatchlists = true
+        }
+      }
+      if (refreshWatchlists && onNewWatchlist) onNewWatchlist()
+
+      return data
+    } catch { return null }
+  }, [onNewWatchlist])
 
   useEffect(() => {
     if (!active) return
@@ -153,19 +174,27 @@ export function AgentPanel({ watchlists, screenConfigs, onNewWatchlist, active }
   }
 
   const handleTrigger = async (task) => {
+    const beforeRunAt = task.last_run_at
     setTriggering(task.id)
     try {
       await fetch(`/api/agent-tasks/${task.id}/trigger`, { method: 'POST' })
     } finally {
       setTriggering(null)
-      // Poll for the run result; if the task can save a watchlist, also reload watchlists
-      const needsWlRefresh = task.task_type === 'finviz_screen' && task.config?.save_watchlist
-      const check = () => {
-        loadTasks()
-        if (needsWlRefresh && onNewWatchlist) onNewWatchlist()
-      }
-      setTimeout(check, 2000)
-      setTimeout(check, 6000)  // second check in case the run takes a moment
+      // The run executes in the background and can take up to ~60s (finviz
+      // screens). Poll until it finishes so the run history — and any saved
+      // watchlist, refreshed inside loadTasks() — update on their own rather
+      // than only after a manual browser reload.
+      let elapsed = 0
+      let sawRunning = false
+      const poll = setInterval(async () => {
+        elapsed += 2500
+        const data = await loadTasks()
+        const t = data?.find(x => x.id === task.id)
+        if (t?.last_run_status === 'running') sawRunning = true
+        const finished = t && t.last_run_status !== 'running'
+          && (sawRunning || t.last_run_at !== beforeRunAt)
+        if (finished || elapsed >= 90000) clearInterval(poll)
+      }, 2500)
     }
   }
 
