@@ -540,7 +540,7 @@ function ScheduleSection({ task, allTasks, onChanged }) {
   return (
     <div style={{
       border: '1px solid var(--border)', borderRadius: '7px',
-      overflow: 'hidden',
+      overflow: 'hidden', flexShrink: 0,
     }}>
       {/* Schedule header row */}
       <div style={{
