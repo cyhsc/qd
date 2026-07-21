@@ -62,15 +62,57 @@ def get_filters():
 
 # ── Sync screener helper (runs in thread pool) ────────────────────────────────
 
+def _make_fixed_overview():
+    """
+    Return an Overview subclass that parses tickers correctly.
+
+    Finviz's ticker cell now contains a logo-letter element in addition to
+    the ticker link, so finvizfinance's ``col.text`` doubles the first
+    letter (AAPL → AAAPL, and worse, A → AA which collides with Alcoa).
+    Read the unambiguous ticker from the cell's ``data-boxover-ticker``
+    attribute (falling back to the link's ``t=`` query param) instead.
+    """
+    import re
+    import pandas as pd
+    from finvizfinance.screener.overview import Overview
+    from finvizfinance.util import number_covert
+
+    class FixedOverview(Overview):
+        def _get_table(self, rows, df, num_col_index, table_header, limit=-1):
+            rows = rows[1:]
+            if limit != -1:
+                rows = rows[0:limit]
+            frame = []
+            for row in rows:
+                cols = row.find_all("td")[1:]
+                info_dict = {}
+                for i, col in enumerate(cols):
+                    if i < len(table_header) and table_header[i] == "Ticker":
+                        ticker = col.get("data-boxover-ticker")
+                        if not ticker:
+                            a = col.find("a", href=True)
+                            m = re.search(r"[?&]t=([^&]+)", a["href"]) if a else None
+                            ticker = m.group(1) if m else col.text.strip()
+                        info_dict[table_header[i]] = ticker
+                    elif i not in num_col_index:
+                        info_dict[table_header[i]] = col.text
+                    else:
+                        info_dict[table_header[i]] = number_covert(col.text)
+                frame.append(info_dict)
+            if len(df) == 0:
+                return pd.DataFrame(frame)
+            return pd.concat([df, pd.DataFrame(frame)], ignore_index=True)
+
+    return FixedOverview
+
+
 def _run_screen(body: ScreenBody) -> list[dict]:
     """
     Execute a Finviz screen and return a list of result dicts.
     Raises ValueError on bad filter/signal/order values (finvizfinance
     propagates those as ValueError already).
     """
-    from finvizfinance.screener.overview import Overview
-
-    s = Overview()
+    s = _make_fixed_overview()()
     s.set_filter(signal=body.signal, filters_dict=body.filters)
     df = s.screener_view(
         order=body.order,

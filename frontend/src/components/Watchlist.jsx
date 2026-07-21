@@ -396,7 +396,7 @@ export function Watchlist({
             }}
           >
             {lists.map(list => (
-              <option key={list.id} value={list.id}>{list.name}</option>
+              <option key={list.id} value={list.id}>{list.name} ({list.symbols?.length ?? 0})</option>
             ))}
           </select>
 
