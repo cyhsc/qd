@@ -70,6 +70,7 @@ function isConfigPopulated(ind) {
     ind.guppyConfigs?.length   ||
     ind.rwbConfigs?.length     ||
     ind.squeezeConfigs?.length ||
+    ind.screenIndConfigs?.length ||
     (ind.chartType && ind.chartType !== 'candlestick')
   )
 }
@@ -139,6 +140,8 @@ export default function App() {
   const [guppyConfigs,  setGuppyConfigs]  = useState(() => lsJson('qd_guppy_configs',  []))
   const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
+  // Screen indicator panes — rows of { id, configId } (configId = screener config)
+  const [screenIndConfigs, setScreenIndConfigs] = useState(() => lsJson('qd_screenind_configs', []))
   // Screen configs — list of { id, name, conditions } objects, persisted on backend
   const [screenConfigs,  setScreenConfigs]  = useState([])
   const [activeConfigId, setActiveConfigId] = useState(null)
@@ -153,6 +156,7 @@ export default function App() {
   const [macdData,    setMacdData]    = useState({})
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
+  const [screenIndData, setScreenIndData] = useState({})   // { rowId: [{time,value}] }
 
   const [topView,  setTopView]  = useState('chart')  // 'chart' | 'screener'
   const [mainTab, setMainTab] = useState('chart') // 'chart' | 'overview' | 'financials' | 'dividends'
@@ -232,6 +236,7 @@ export default function App() {
     guppyConfigs:   lsJson('qd_guppy_configs',  []),
     rwbConfigs:     lsJson('qd_rwb_configs',    []),
     squeezeConfigs: lsJson('qd_squeeze_configs',[]),
+    screenIndConfigs: lsJson('qd_screenind_configs', []),
     chartType:      lsJson('qd_chart_type',     'candlestick'),
   })
 
@@ -434,6 +439,7 @@ export default function App() {
     setGuppyConfigs(  indicators.guppyConfigs   ?? [])
     setRwbConfigs(    indicators.rwbConfigs     ?? [])
     setSqueezeConfigs(indicators.squeezeConfigs ?? [])
+    setScreenIndConfigs(indicators.screenIndConfigs ?? [])
     setChartType(     indicators.chartType      ?? 'candlestick')
   }
 
@@ -532,6 +538,30 @@ export default function App() {
     fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs)
   }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, candles, fetchIndicators])
 
+  // ── Fetch screen-indicator history (daily interval only) ─────────────────
+  useEffect(() => {
+    if (!symbol || !candles || interval !== 'D' || screenIndConfigs.length === 0) {
+      setScreenIndData({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const entries = await Promise.all(screenIndConfigs.map(async cfg => {
+        if (cfg.configId == null) return [cfg.id, null]
+        try {
+          const res = await fetch(`/api/stocks/${symbol}/screen-history?config_id=${cfg.configId}`)
+          if (!res.ok) return [cfg.id, null]
+          const d = await res.json()
+          return [cfg.id, d.data]
+        } catch {
+          return [cfg.id, null]
+        }
+      }))
+      if (!cancelled) setScreenIndData(Object.fromEntries(entries))
+    })()
+    return () => { cancelled = true }
+  }, [symbol, interval, candles, screenIndConfigs])
+
   // ── Toolbar handlers ──────────────────────────────────────────────────────
 
   const handleSearch = (e) => {
@@ -553,11 +583,11 @@ export default function App() {
     if (!chartConfigsLoaded.current) return
     const id = activeChartConfigIdRef.current
     if (id == null) return
-    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType }
+    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType }
     // Mirror into local state so switching configs sees the latest values
     setChartConfigs(prev => prev.map(c => c.id !== id ? c : { ...c, indicators }))
     saveChartConfig(id, indicators)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch to a different chart config — apply its indicators immediately
   const handleChartConfigChange = useCallback((id) => {
@@ -570,7 +600,7 @@ export default function App() {
   // Create a new chart config, seeded from the current indicator state
   const handleCreateChartConfig = useCallback(async (name) => {
     const indicators = {
-      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType,
+      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType,
     }
     const res = await fetch('/api/chart-configs', {
       method: 'POST',
@@ -581,7 +611,7 @@ export default function App() {
     const created = await res.json()
     setChartConfigs(prev => [...prev, created])
     setActiveChartConfigId(created.id)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, chartType])
+  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType])
 
   // Delete a chart config (must keep at least one)
   const handleDeleteChartConfig = useCallback(async (id) => {
@@ -1113,6 +1143,8 @@ export default function App() {
                 guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
                 rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
                 squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
+                screenIndConfigs={screenIndConfigs} onScreenIndChange={setScreenIndConfigs}
+                screenerConfigs={screenConfigs}
               />
               <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
               <ChartConfigSelector
@@ -1178,6 +1210,13 @@ export default function App() {
                 guppyConfigs={guppyConfigs} guppyData={guppyData}
                 rwbConfigs={rwbConfigs}         rwbData={rwbData}
                 squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
+                screenIndConfigs={interval === 'D'
+                  ? screenIndConfigs.map(c => ({
+                      ...c,
+                      name: screenConfigs.find(s => s.id === c.configId)?.name ?? `#${c.configId}`,
+                    }))
+                  : []}
+                screenIndData={screenIndData}
               />
             )}
             {symbol && chartType === 'renko' && <RenkoChart symbol={symbol} theme={theme} />}

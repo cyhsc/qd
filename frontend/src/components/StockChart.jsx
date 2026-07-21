@@ -6,6 +6,9 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 const GUPPY_SHORT = [3, 5, 8, 10, 12, 15]
 const GUPPY_LONG  = [30, 35, 40, 45, 50, 60]
 
+// Screen-indicator pane line colors (index-matched with IndicatorPanel rows)
+const SCREEN_COLORS = ['#2962ff', '#f59e0b', '#ab47bc', '#26a69a']
+
 // ── Layout constants ──────────────────────────────────────────────────────────
 
 const SPLIT_DEFAULT = 0.65
@@ -199,6 +202,8 @@ export function StockChart({
   macdData       = {},    // { "12,26,9": { macd_line, signal_line, histogram } }
   rwbData        = null,  // { fast_width: [...], slow_width: [...], rwb: [...] }
   squeezeData    = null,  // { mom: [...], sqz: [...] }
+  screenIndConfigs = [],  // [{ id, configId, name }] — screener-based 0/1 panes
+  screenIndData    = {},  // { rowId: [{time, value}] }
 }) {
   const containerRef   = useRef(null)
   const chartRef       = useRef(null)
@@ -232,11 +237,16 @@ export function StockChart({
   const sqzSeriesMap  = useRef(new Map())
   const sqzScaleRef   = useRef(null)
 
+  // screenSeriesMap: id → line series (0/1 step line per screener)
+  const screenSeriesMap = useRef(new Map())
+  const screenScaleRef  = useRef(null)
+
   const [hover,       setHover]      = useState(null)
   const [maLegend,    setMaLegend]   = useState({})
   const [macdLegend,  setMacdLegend] = useState({})
   const [rwbLegend,   setRwbLegend]  = useState(null)   // { fast, slow, rwb }
   const [sqzLegend,   setSqzLegend]  = useState(null)   // { mom, momColor, sqzColor }
+  const [screenLegend, setScreenLegend] = useState({})  // { rowId: 0 | 1 }
   const [rightAxisW,  setRightAxisW] = useState(60)     // measured right-axis pixel width
 
   // ── Draggable split ───────────────────────────────────────────────────────
@@ -268,9 +278,10 @@ export function StockChart({
     }
   }, [])
 
-  const hasMacd = macdConfigs.length    > 0
-  const hasRwb  = rwbConfigs.length     > 0
-  const hasSqz  = squeezeConfigs.length > 0
+  const hasMacd   = macdConfigs.length      > 0
+  const hasRwb    = rwbConfigs.length       > 0
+  const hasSqz    = squeezeConfigs.length   > 0
+  const hasScreen = screenIndConfigs.length > 0
 
   // Keep refs in sync with props so effects with [] deps can read current values
   const themeRef = useRef(theme)
@@ -292,8 +303,8 @@ export function StockChart({
   // to be recreated (empty dep array is intentional).
 
   const syncSubPaneMargins = useCallback(() => {
-    // Order: MACD → RWB → Squeeze  (matches activeSubPanes order in render)
-    const live = [macdScaleRef, rwbScaleRef, sqzScaleRef].filter(r => r.current != null)
+    // Order: MACD → RWB → Squeeze → Screen  (matches activeSubPanes order in render)
+    const live = [macdScaleRef, rwbScaleRef, sqzScaleRef, screenScaleRef].filter(r => r.current != null)
     const total = live.length
     if (total === 0) return
     live.forEach((ref, idx) => {
@@ -394,11 +405,13 @@ export function StockChart({
       macdScaleRef.current = null
       rwbScaleRef.current  = null
       sqzScaleRef.current  = null
+      screenScaleRef.current = null
       maSeriesMap.current.clear()
       macdSeriesMap.current.clear()
       guppySeriesMap.current.clear()
       rwbSeriesMap.current.clear()
       sqzSeriesMap.current.clear()
+      screenSeriesMap.current.clear()
       maLastValsRef.current  = {}
       macdLastRef.current    = {}
       macdByTimeRef.current  = {}
@@ -807,6 +820,57 @@ export function StockChart({
     }
   }, [squeezeConfigs, squeezeData, syncSubPaneMargins])
 
+  // ── Screen indicator series (0/1 step lines) ──────────────────────────────
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart    = chartRef.current
+    const map      = screenSeriesMap.current
+    const incoming = new Set(screenIndConfigs.map(s => s.id))
+
+    for (const [id, series] of map) {
+      if (!incoming.has(id)) {
+        chart.removeSeries(series)
+        map.delete(id)
+        if (screenScaleRef.current === series) {
+          screenScaleRef.current = map.values().next().value ?? null
+        }
+      }
+    }
+    if (screenIndConfigs.length === 0) {
+      screenScaleRef.current = null
+      syncSubPaneMargins()
+      setScreenLegend({})
+      return
+    }
+
+    const legend = {}
+    screenIndConfigs.forEach((cfg, i) => {
+      const color = SCREEN_COLORS[i % SCREEN_COLORS.length]
+      if (!map.has(cfg.id)) {
+        const series = chart.addLineSeries({
+          priceScaleId: 'screenind',
+          color, lineWidth: 2,
+          lineType: 1,   // step line — holds each 0/1 value until the next bar
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: { minValue: -0.15, maxValue: 1.15 } }),
+        })
+        map.set(cfg.id, series)
+        if (!screenScaleRef.current) {
+          screenScaleRef.current = series
+          chart.priceScale('screenind').applyOptions({ visible: false })
+        }
+        syncSubPaneMargins()
+      }
+      const series = map.get(cfg.id)
+      series.applyOptions({ color })
+      const data = screenIndData[cfg.id] ?? []
+      series.setData(data)
+      legend[cfg.id] = data.length ? data[data.length - 1].value : null
+    })
+    setScreenLegend(legend)
+  }, [screenIndConfigs, screenIndData, syncSubPaneMargins])
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   const isUp = hover ? hover.close >= hover.open : true
@@ -814,9 +878,10 @@ export function StockChart({
 
   // Active sub-panes in display order; drives separators and legend positions.
   const activeSubPanes = [
-    hasMacd && 'macd',
-    hasRwb  && 'rwb',
-    hasSqz  && 'sqz',
+    hasMacd   && 'macd',
+    hasRwb    && 'rwb',
+    hasSqz    && 'sqz',
+    hasScreen && 'screen',
   ].filter(Boolean)
   const totalSubPanes = activeSubPanes.length
   const H = totalSubPanes > 0 ? (1 - split) / totalSubPanes : 0
@@ -1001,6 +1066,35 @@ export function StockChart({
         </div>
       )}
 
+      {/* Screen indicator legend */}
+      {hasScreen && (
+        <div style={{
+          position: 'absolute', zIndex: 10, pointerEvents: 'none',
+          top: `calc(${paneTop(activeSubPanes.indexOf('screen')) * 100}% + 8px)`, left: 12,
+          display: 'flex', flexWrap: 'wrap', gap: '14px',
+          fontSize: '11px', fontFamily: 'var(--font-mono)',
+        }}>
+          {screenIndConfigs.map((cfg, i) => {
+            const v     = screenLegend[cfg.id]
+            const color = SCREEN_COLORS[i % SCREEN_COLORS.length]
+            return (
+              <span key={cfg.id} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{
+                  display: 'inline-block', width: '16px', height: '2px',
+                  background: color, borderRadius: '1px', flexShrink: 0,
+                }} />
+                <span style={{ color: 'var(--text-muted)' }}>SCR {cfg.name}</span>
+                {v != null && (
+                  <span style={{ color: v ? '#26a69a' : '#ef5350', fontWeight: 600 }}>
+                    {v ? 'PASS' : 'FAIL'}
+                  </span>
+                )}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
       {/* Per-panel right-axis overlays — mask labels bleeding from the main axis
           and show each sub-panel's own current value within its bounds.          */}
       {activeSubPanes.map((pane, k) => {
@@ -1022,6 +1116,10 @@ export function StockChart({
         } else if (pane === 'sqz') {
           if (sqzLegend?.mom != null)
             valueEl = <span style={{ color: sqzLegend.momColor ?? 'var(--text-secondary)', fontSize: 10 }}>{fmtMacd(sqzLegend.mom)}</span>
+        } else if (pane === 'screen') {
+          const v = screenLegend[screenIndConfigs[0]?.id]
+          if (v != null)
+            valueEl = <span style={{ color: v ? '#26a69a' : '#ef5350', fontSize: 10 }}>{v}</span>
         }
 
         return (

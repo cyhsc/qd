@@ -128,6 +128,30 @@ function SqueezeRow({ onRemove }) {
   )
 }
 
+// ── Screen row ────────────────────────────────────────────────────────────────
+
+const SCREEN_COLORS = ['#2962ff', '#f59e0b', '#ab47bc', '#26a69a']
+
+function ScreenRow({ cfg, colorIdx, screeners, onUpdate, onRemove }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+      <div style={{
+        width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
+        background: SCREEN_COLORS[colorIdx % SCREEN_COLORS.length],
+      }} />
+      <select
+        value={cfg.configId ?? ''}
+        onChange={e => onUpdate({ configId: Number(e.target.value) })}
+        style={{ ...inputStyle, flex: 1, cursor: 'pointer' }}
+      >
+        {cfg.configId == null && <option value="">— pick screener —</option>}
+        {screeners.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </select>
+      <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
+    </div>
+  )
+}
+
 // ── MACD row ──────────────────────────────────────────────────────────────────
 
 function MACDRow({ macd, onUpdate, onRemove }) {
@@ -211,7 +235,7 @@ function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeader
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange, rwbConfigs, onRwbChange, squeezeConfigs, onSqueezeChange }) {
+export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange, rwbConfigs, onRwbChange, squeezeConfigs, onSqueezeChange, screenIndConfigs = [], onScreenIndChange, screenerConfigs = [] }) {
   const [open, setOpen] = useState(false)
   const panelRef        = useRef(null)
   const btnRef          = useRef(null)
@@ -265,7 +289,15 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeMACD  = id     => onMacdChange(macdConfigs.filter(m => m.id !== id))
   const updateMACD  = (id, up) => onMacdChange(macdConfigs.map(m => m.id === id ? { ...m, ...up } : m))
 
-  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length + rwbConfigs.length + squeezeConfigs.length
+  // Screen handlers
+  const addScreen    = () => onScreenIndChange([
+    ...screenIndConfigs,
+    { id: Date.now().toString(), configId: screenerConfigs[0]?.id ?? null },
+  ])
+  const removeScreen = id       => onScreenIndChange(screenIndConfigs.filter(s => s.id !== id))
+  const updateScreen = (id, up) => onScreenIndChange(screenIndConfigs.map(s => s.id === id ? { ...s, ...up } : s))
+
+  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length + rwbConfigs.length + squeezeConfigs.length + screenIndConfigs.length
   const btnLabel   = totalCount > 0 ? `Indicators (${totalCount})` : 'Indicators'
 
   return (
@@ -394,6 +426,24 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
           >
             {rwbConfigs.map(r => (
               <RWBRow key={r.id} onRemove={() => removeRWB(r.id)} />
+            ))}
+          </IndicatorSection>
+
+          {/* ── Divider ── */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+
+          {/* ── Screen ── */}
+          <IndicatorSection
+            label="Screen"
+            count={screenIndConfigs.length}
+            addLabel="Add Screen"
+            onAdd={addScreen}
+          >
+            {screenIndConfigs.map((s, i) => (
+              <ScreenRow key={s.id} cfg={s} colorIdx={i}
+                screeners={screenerConfigs}
+                onUpdate={up => updateScreen(s.id, up)}
+                onRemove={() => removeScreen(s.id)} />
             ))}
           </IndicatorSection>
         </div>

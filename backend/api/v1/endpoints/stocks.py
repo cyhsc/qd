@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
-from core.screen import screen_individual, screen_symbols_detailed
+from core.screen import screen_history, screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
 from db import CacheMeta, Price, ScreenConfig, get_db
 
@@ -453,6 +453,49 @@ async def get_screen(
 class BatchScreenRequest(BaseModel):
     symbols:   list[str]
     config_id: int | None = None
+
+
+@router.get("/{symbol}/screen-history")
+async def get_screen_history(
+    symbol: str,
+    config_id: int | None = Query(default=None),
+    bars: int = Query(default=750, ge=10, le=5000),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Evaluate a screen config at every historical daily bar.
+
+    Returns ``{symbol, config_id, data: [{time, value}]}`` where value is
+    1 (bar passes the screen) or 0 (bar fails), ascending by date.
+    """
+    sym = symbol.upper()
+
+    condition_overrides: dict = {}
+    if config_id is not None:
+        row = await db.get(ScreenConfig, config_id)
+        if row:
+            condition_overrides = {k: v for k, v in (row.conditions or {}).items() if k != '_universe'}
+
+    loop = asyncio.get_event_loop()
+    try:
+        data = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: screen_history(
+                sym,
+                condition_overrides=condition_overrides,
+                max_bars=bars,
+            )),
+            timeout=60.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=408,
+                            detail=f"Screen history timed out for '{sym}' (>60 s)")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502,
+                            detail=f"Screen history failed for '{sym}': {exc}")
+
+    return {"symbol": sym, "config_id": config_id, "data": data}
 
 
 @router.post("/screen/batch")

@@ -11,16 +11,23 @@ trend/momentum conditions using MACD, RWB, and SQZ analysis.
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Callable
 
 import numpy as np
 
 from core.analysis import (
-    MACDAnalysis, RWBAnalysis, SQZAnalysis,
+    LineAnalysis, MACDAnalysis, RWBAnalysis, SQZAnalysis,
     Sign, Slope, SqueezeState,
     analyze_macd, analyze_rwb, analyze_sqz,
+    _sign, _slope, _SQZ_COLOR_TO_STATE,
 )
 from core.prices import get_daily_ohlc
+from core.technicals import (
+    calc_macd as _calc_macd,
+    calc_rwb as _calc_rwb,
+    calc_squeeze as _calc_squeeze,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +273,98 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
 
 
 # ---------------------------------------------------------------------------
+# Parametric condition setup (shared by screen_individual and screen_history)
+# ---------------------------------------------------------------------------
+
+_OP_SYMBOL = {"gt": ">", "eq": "=", "lt": "1≤n<"}
+_OP_LABEL  = {"gt": "greater than", "eq": "equal to", "lt": "at least 1 but less than"}
+
+_PARAMETRIC = {
+    "sqz_consecutive_positive_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "SQZ consecutive positive bars {sym} {thr} — bars since momentum last turned positive is {lbl} {thr}",
+        "value_fn": lambda m, r, s: s.consecutive_positive_bars,
+    },
+    "macd_histogram_consecutive_positive_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "MACD histogram consecutive positive bars {sym} {thr} — bars since histogram last turned positive is {lbl} {thr}",
+        "value_fn": lambda m, r, s: m.consecutive_positive_bars,
+    },
+    "rwb_bars_since_fast_above_slow": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "RWB bars since fast width crossed above slow width {sym} {thr} — consecutive bars fast_width above slow_width is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.bars_since_fast_above_slow,
+    },
+    "rwb_slow_width_consecutive_positive_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "RWB slow_width consecutive positive bars {sym} {thr} — consecutive bars slow_width has been positive is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.slow_width_consecutive_positive_bars,
+    },
+    "rwb_fast_width_consecutive_positive_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "RWB fast_width consecutive positive bars {sym} {thr} — consecutive bars fast_width has been positive is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.fast_width_consecutive_positive_bars,
+    },
+    "rwb_slow_width_consecutive_rising_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "RWB slow_width consecutive rising bars {sym} {thr} — consecutive bars slow_width has been rising is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.slow_width_consecutive_rising_bars,
+    },
+    "rwb_fast_width_consecutive_rising_bars": {
+        "default_threshold": 3, "default_op": "gt",
+        "description_tmpl": "RWB fast_width consecutive rising bars {sym} {thr} — consecutive bars fast_width has been rising is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.fast_width_consecutive_rising_bars,
+    },
+}
+
+
+def _apply_condition_overrides(overrides: dict) -> None:
+    """Rebuild parametric condition descriptions and fns from user settings."""
+    for cname, meta in _PARAMETRIC.items():
+        ov        = overrides.get(cname, {})
+        threshold = int(ov.get("threshold", meta["default_threshold"]))
+        op        = ov.get("op", meta["default_op"])
+        op_sym    = _OP_SYMBOL.get(op, ">")
+        op_lbl    = _OP_LABEL.get(op, "greater than")
+        _CONDITIONS[cname]["description"] = meta["description_tmpl"].format(
+            sym=op_sym, thr=threshold, lbl=op_lbl,
+        )
+        value_fn = meta["value_fn"]
+        def _make_fn(vfn, t, o):
+            def _fn(m, r, s):
+                n = vfn(m, r, s)
+                if o == "gt": return n > t
+                if o == "eq": return n == t
+                # "lt" requires an active streak: a count of 0 means the
+                # condition isn't currently true at all (e.g. fast_width is
+                # negative), which should NOT pass "fewer than t bars".
+                if o == "lt": return 0 < n < t
+                return False
+            return _fn
+        _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op)
+
+
+def _effective_verdict_rules(overrides: dict) -> dict[str, bool]:
+    """
+    Verdict rules for a screen run.
+
+    If the config explicitly sets verdict_role on any condition, those are the
+    ONLY rules — matching the frontend, whose derived logic is the AND of the
+    config's own required conditions.  Backend defaults (_VERDICT_RULES) apply
+    only when the config specifies no verdict roles at all (e.g. ad-hoc
+    screens run without a config).
+    """
+    explicit = {
+        name: ov["verdict_role"]
+        for name, ov in overrides.items()
+        if not name.startswith("_") and isinstance(ov, dict) and "verdict_role" in ov
+    }
+    if explicit:
+        return explicit
+    return dict(_VERDICT_RULES)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -318,79 +417,10 @@ def screen_individual(
     sqz_result  = analyze_sqz(closes, highs, lows)
 
     # ── Effective verdict rules: backend defaults overridden by config ────
-    effective_verdict_rules: dict[str, bool] = {}
-    for name, required in _VERDICT_RULES.items():
-        ov = overrides.get(name, {})
-        effective_verdict_rules[name] = ov.get("verdict_role", required)
-    # Also pick up any conditions that are in overrides but NOT in _VERDICT_RULES
-    for name, ov in overrides.items():
-        if name not in effective_verdict_rules and "verdict_role" in ov and ov["verdict_role"] is not None:
-            effective_verdict_rules[name] = ov["verdict_role"]
+    effective_verdict_rules = _effective_verdict_rules(overrides)
 
     # ── Build dynamic parametric condition descriptions and fns ──────────
-    _op_symbol = {"gt": ">", "eq": "=", "lt": "1≤n<"}
-    _op_label  = {"gt": "greater than", "eq": "equal to", "lt": "at least 1 but less than"}
-
-    _PARAMETRIC = {
-        "sqz_consecutive_positive_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "SQZ consecutive positive bars {sym} {thr} — bars since momentum last turned positive is {lbl} {thr}",
-            "value_fn": lambda m, r, s: s.consecutive_positive_bars,
-        },
-        "macd_histogram_consecutive_positive_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "MACD histogram consecutive positive bars {sym} {thr} — bars since histogram last turned positive is {lbl} {thr}",
-            "value_fn": lambda m, r, s: m.consecutive_positive_bars,
-        },
-        "rwb_bars_since_fast_above_slow": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "RWB bars since fast width crossed above slow width {sym} {thr} — consecutive bars fast_width above slow_width is {lbl} {thr}",
-            "value_fn": lambda m, r, s: r.bars_since_fast_above_slow,
-        },
-        "rwb_slow_width_consecutive_positive_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "RWB slow_width consecutive positive bars {sym} {thr} — consecutive bars slow_width has been positive is {lbl} {thr}",
-            "value_fn": lambda m, r, s: r.slow_width_consecutive_positive_bars,
-        },
-        "rwb_fast_width_consecutive_positive_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "RWB fast_width consecutive positive bars {sym} {thr} — consecutive bars fast_width has been positive is {lbl} {thr}",
-            "value_fn": lambda m, r, s: r.fast_width_consecutive_positive_bars,
-        },
-        "rwb_slow_width_consecutive_rising_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "RWB slow_width consecutive rising bars {sym} {thr} — consecutive bars slow_width has been rising is {lbl} {thr}",
-            "value_fn": lambda m, r, s: r.slow_width_consecutive_rising_bars,
-        },
-        "rwb_fast_width_consecutive_rising_bars": {
-            "default_threshold": 3, "default_op": "gt",
-            "description_tmpl": "RWB fast_width consecutive rising bars {sym} {thr} — consecutive bars fast_width has been rising is {lbl} {thr}",
-            "value_fn": lambda m, r, s: r.fast_width_consecutive_rising_bars,
-        },
-    }
-
-    for cname, meta in _PARAMETRIC.items():
-        ov        = overrides.get(cname, {})
-        threshold = int(ov.get("threshold", meta["default_threshold"]))
-        op        = ov.get("op", meta["default_op"])
-        op_sym    = _op_symbol.get(op, ">")
-        op_lbl    = _op_label.get(op, "greater than")
-        _CONDITIONS[cname]["description"] = meta["description_tmpl"].format(
-            sym=op_sym, thr=threshold, lbl=op_lbl,
-        )
-        value_fn = meta["value_fn"]
-        def _make_fn(vfn, t, o):
-            def _fn(m, r, s):
-                n = vfn(m, r, s)
-                if o == "gt": return n > t
-                if o == "eq": return n == t
-                # "lt" requires an active streak: a count of 0 means the
-                # condition isn't currently true at all (e.g. fast_width is
-                # negative), which should NOT pass "fewer than t bars".
-                if o == "lt": return 0 < n < t
-                return False
-            return _fn
-        _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op)
+    _apply_condition_overrides(overrides)
 
     # ── Evaluate every condition ──────────────────────────────────────────
     conditions: list[ConditionResult] = []
@@ -425,6 +455,136 @@ def screen_individual(
     logger.info("%-6s  %s  score=%d/%d  failing=%s",
                 sym, "PASS" if verdict else "FAIL", score, len(conditions), failing or "none")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Historical screen indicator
+# ---------------------------------------------------------------------------
+
+def screen_history(
+    symbol: str,
+    condition_overrides: dict | None = None,
+    max_bars: int = 750,
+) -> list[dict]:
+    """
+    Evaluate the screen verdict at every historical daily bar.
+
+    Computes the MACD/RWB/SQZ series once over the full price history, then
+    walks the bars maintaining streak counters incrementally, so the cost is
+    O(n) rather than re-running the full analysis per bar.  Each bar is
+    evaluated with the exact same condition fns and logic evaluator used by
+    :func:`screen_individual`, so a bar's value matches what the screener
+    would have said on that day.
+
+    Returns a list of ``{"time": "YYYY-MM-DD", "value": 0 | 1}`` for the last
+    ``max_bars`` evaluable bars, ascending by date.
+    """
+    sym       = symbol.upper().strip()
+    overrides = condition_overrides or {}
+
+    hist   = get_daily_ohlc(sym)
+    closes = np.asarray(hist["Close"].values, dtype=float)
+    highs  = np.asarray(hist["High"].values,  dtype=float)
+    lows   = np.asarray(hist["Low"].values,   dtype=float)
+    dates  = [str(d) for d in hist.index]
+
+    # ── Compute all indicator series once over the full history ──────────
+    macd_data = _calc_macd(closes, 12, 26, 9, dates)
+    rwb_data  = _calc_rwb(closes, dates)
+    sqz_data  = _calc_squeeze(closes, highs, lows, dates)
+
+    def _by_time(points):
+        out = {}
+        for p in points:
+            v = float(p["value"])
+            if not np.isnan(v):
+                out[p["time"]] = v
+        return out
+
+    series = {
+        "macd":   _by_time(macd_data["macd_line"]),
+        "signal": _by_time(macd_data["signal_line"]),
+        "hist":   _by_time(macd_data["histogram"]),
+        "fast":   _by_time(rwb_data["fast_width"]),
+        "slow":   _by_time(rwb_data["slow_width"]),
+        "rwb":    _by_time(rwb_data["rwb"]),
+        "mom":    _by_time(sqz_data["mom"]),
+    }
+    sqz_color = {p["time"]: p.get("color") for p in sqz_data["sqz"]}
+
+    # ── Which conditions matter for the verdict ──────────────────────────
+    _apply_condition_overrides(overrides)
+    rules = _effective_verdict_rules(overrides)
+    logic = overrides.get("_logic")
+    if logic and logic.get("groups"):
+        relevant = {n for g in logic["groups"] for n in g.get("conditions", [])}
+    else:
+        relevant = {n for n, req in rules.items() if req is not None}
+    specs = [(n, _CONDITIONS[n]["fn"], rules.get(n)) for n in sorted(relevant) if n in _CONDITIONS]
+
+    # ── Walk bars, updating streaks incrementally ─────────────────────────
+    # Each streak counter starts as soon as ITS series has values — series
+    # have different warmup lengths (RWB slow width needs ~60 bars, MACD
+    # ~35), and a streak may already be running before the last series
+    # comes online.  Evaluation only happens once every series is present.
+    keys      = ("macd", "signal", "hist", "fast", "slow", "rwb", "mom")
+    eval_from = max(0, len(dates) - max_bars)
+    prev: dict = {}   # per-series previous value (last available point)
+    hist_pos = mom_pos = fast_pos = slow_pos = fast_rise = slow_rise = fast_above = 0
+    out: list[dict] = []
+
+    for i, t in enumerate(dates):
+        vals = {k: series[k].get(t) for k in keys}
+
+        if vals["hist"] is not None:
+            hist_pos = hist_pos + 1 if vals["hist"] > 0 else 0
+        if vals["mom"] is not None:
+            mom_pos = mom_pos + 1 if vals["mom"] > 0 else 0
+        if vals["fast"] is not None:
+            fast_pos = fast_pos + 1 if vals["fast"] > 0 else 0
+            if prev.get("fast") is not None:
+                fast_rise = fast_rise + 1 if vals["fast"] > prev["fast"] else 0
+        if vals["slow"] is not None:
+            slow_pos = slow_pos + 1 if vals["slow"] > 0 else 0
+            if prev.get("slow") is not None:
+                slow_rise = slow_rise + 1 if vals["slow"] > prev["slow"] else 0
+        if vals["fast"] is not None and vals["slow"] is not None:
+            fast_above = fast_above + 1 if vals["fast"] > vals["slow"] else 0
+
+        ready = all(vals[k] is not None and prev.get(k) is not None for k in keys)
+        if ready and i >= eval_from:
+            def la(k):
+                return LineAnalysis(sign=_sign(vals[k]), slope=_slope(vals[k], prev[k]),
+                                    value=vals[k], prev_value=prev[k])
+            m = SimpleNamespace(
+                macd=la("macd"), signal=la("signal"), histogram=la("hist"),
+                consecutive_positive_bars=hist_pos,
+            )
+            r = SimpleNamespace(
+                fast_width=la("fast"), slow_width=la("slow"), rwb=la("rwb"),
+                fast_width_above_slow_width=vals["fast"] > vals["slow"],
+                bars_since_fast_above_slow=fast_above,
+                slow_width_consecutive_positive_bars=slow_pos,
+                fast_width_consecutive_positive_bars=fast_pos,
+                slow_width_consecutive_rising_bars=slow_rise,
+                fast_width_consecutive_rising_bars=fast_rise,
+            )
+            s = SimpleNamespace(
+                momentum=la("mom"),
+                squeeze_state=_SQZ_COLOR_TO_STATE.get(sqz_color.get(t), SqueezeState.NONE),
+                consecutive_positive_bars=mom_pos,
+            )
+            conds = [
+                ConditionResult(name=n, description="", passed=bool(fn(m, r, s)), verdict_role=role)
+                for n, fn, role in specs
+            ]
+            out.append({"time": t, "value": 1 if _evaluate_logic(conds, logic) else 0})
+
+        for k in keys:
+            if vals[k] is not None:
+                prev[k] = vals[k]
+
+    return out
 
 
 # ---------------------------------------------------------------------------
