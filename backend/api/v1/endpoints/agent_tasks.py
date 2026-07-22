@@ -36,7 +36,8 @@ from db import AgentTask, AgentTaskRun, get_db
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_ET = pytz.timezone("America/New_York")
+# Agent schedules are expressed in San Francisco (Pacific) time.
+_SCHED_TZ = pytz.timezone("America/Los_Angeles")
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ class TaskBody(BaseModel):
 
 class ScheduleBody(BaseModel):
     """Set or update the schedule for a task (includes optional chaining)."""
-    schedule_time: str        # "HH:MM" ET
+    schedule_time: str        # "HH:MM" PT (San Francisco)
     frequency:     str = "weekdays"   # daily | weekdays | weekly | monthly
     day_of_week:   int | None = None  # 0=Mon..6=Sun (weekly only)
     day_of_month:  int | None = None  # 1-28       (monthly only)
@@ -121,7 +122,7 @@ def set_scheduler(sched):
 
 def _cron_kwargs(task: AgentTask) -> dict:
     h, m = task.schedule_time.split(":")
-    base = {"hour": int(h), "minute": int(m), "timezone": _ET}
+    base = {"hour": int(h), "minute": int(m), "timezone": _SCHED_TZ}
     freq = task.frequency
     if freq == "daily":
         return base
@@ -152,13 +153,13 @@ def schedule_task(task: AgentTask):
     if task.frequency == "once":
         # schedule_time holds a full "YYYY-MM-DDTHH:MM" string for one-shot runs
         from datetime import datetime as _dt
-        run_date = _ET.localize(_dt.fromisoformat(task.schedule_time))
+        run_date = _SCHED_TZ.localize(_dt.fromisoformat(task.schedule_time))
         _scheduler.add_job(
             _execute_task, "date",
             id=jid, args=[task.id],
             run_date=run_date,
         )
-        logger.info("Scheduled %s  once at %s ET", jid, task.schedule_time)
+        logger.info("Scheduled %s  once at %s PT", jid, task.schedule_time)
     else:
         _scheduler.add_job(
             _execute_task, "cron",

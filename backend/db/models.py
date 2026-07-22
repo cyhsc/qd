@@ -93,7 +93,7 @@ class AgentTask(Base):
     # task_type-specific params, e.g.:
     #   screener: { "screen_config_id": int, "watchlist_id": int }
     config          = Column(JSON,    nullable=False, default=dict)
-    schedule_time   = Column(String,  nullable=False, default="09:30")  # "HH:MM" ET
+    schedule_time   = Column(String,  nullable=False, default="09:30")  # "HH:MM" PT (San Francisco)
     # daily | weekdays | weekly | monthly
     frequency       = Column(String,  nullable=False, default="weekdays")
     day_of_week     = Column(Integer, nullable=True)   # 0=Mon..6=Sun (weekly only)

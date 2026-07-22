@@ -44,17 +44,17 @@ function scheduleLabel(schedule) {
       month: 'short', day: 'numeric', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: false,
     })
-    return `Once at ${label} ET`
+    return `Once at ${label} PT`
   }
   const freq = FREQ_OPTIONS.find(f => f.value === schedule.frequency)?.label ?? schedule.frequency
   if (schedule.frequency === 'weekly') {
     const dow = DOW_OPTIONS.find(d => d.value === schedule.day_of_week)?.label ?? ''
-    return `${freq} on ${dow} @ ${schedule.schedule_time} ET`
+    return `${freq} on ${dow} @ ${schedule.schedule_time} PT`
   }
   if (schedule.frequency === 'monthly') {
-    return `${freq} on day ${schedule.day_of_month ?? 1} @ ${schedule.schedule_time} ET`
+    return `${freq} on day ${schedule.day_of_month ?? 1} @ ${schedule.schedule_time} PT`
   }
-  return `${freq} @ ${schedule.schedule_time} ET`
+  return `${freq} @ ${schedule.schedule_time} PT`
 }
 
 function emptyTaskForm() {
@@ -591,7 +591,7 @@ function ScheduleSection({ task, allTasks, onChanged }) {
           </FormField>
 
           {form.frequency === 'once' ? (
-            <FormField label="Run At (Eastern Time)">
+            <FormField label="Run At (Pacific Time)">
               <input
                 type="datetime-local"
                 value={form.schedule_time}
@@ -604,7 +604,7 @@ function ScheduleSection({ task, allTasks, onChanged }) {
             </FormField>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <FormField label="Run Time (ET)">
+              <FormField label="Run Time (PT)">
                 <input
                   type="time"
                   value={form.schedule_time}
