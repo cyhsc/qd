@@ -13,7 +13,8 @@ import pandas as pd
 
 from pydantic import BaseModel
 
-from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh
+from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh, last_trading_day
+from core.prices import repair_trailing_daily_close
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
 from core.screen import screen_history, screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
@@ -129,7 +130,17 @@ async def read_cached_prices(db: AsyncSession, symbol: str, interval: str) -> li
         .where(Price.symbol == symbol, Price.interval == interval)
         .order_by(Price.ts)
     )).scalars().all()
-    return rows if rows else None
+    if not rows:
+        return None
+    # Daily: don't serve a cache missing the last completed session (e.g. a
+    # NaN-close bar that got dropped). Bounded by the plain TTL so an
+    # upstream-unavailable bar isn't refetched on every request.
+    if interval == "1d":
+        newest = str(rows[-1].ts)[:10]
+        if (newest < last_trading_day().isoformat()
+                and time.time() - meta.fetched_at >= ttl):
+            return None
+    return rows
 
 
 async def write_cache(db: AsyncSession, symbol: str, interval: str, rows: list[dict]) -> None:
@@ -197,6 +208,8 @@ async def get_history(
     hist = ticker.history(period=max_period, interval=yf_interval, auto_adjust=False)
     if hist.empty:
         raise HTTPException(status_code=404, detail=f"No data found for symbol '{symbol}'")
+    if yf_interval == "1d":
+        hist = repair_trailing_daily_close(ticker, hist)
 
     candles, volume, db_rows = [], [], []
     for ts, row in hist.iterrows():

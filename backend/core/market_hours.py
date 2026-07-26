@@ -57,6 +57,15 @@ def last_market_close(now: float | None = None) -> float:
     return datetime.combine(d, _CLOSE, tzinfo=_ET).timestamp()
 
 
+def last_trading_day(now: float | None = None) -> date:
+    """Date of the most recent *completed* regular session (ET).
+
+    Same day as ``last_market_close`` — the newest daily bar we can expect to
+    exist. Never returns today while the session is still forming.
+    """
+    return datetime.fromtimestamp(last_market_close(now), _ET).date()
+
+
 def daily_cache_is_fresh(fetched_at: float, ttl: int, now: float | None = None) -> bool:
     """
     Freshness rule for DAILY_INTERVALS:
