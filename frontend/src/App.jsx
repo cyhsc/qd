@@ -766,6 +766,10 @@ export default function App() {
       // Only intercept printable alphanumeric keys and Backspace
       if (!/^[a-zA-Z0-9]$/.test(e.key) && e.key !== 'Backspace') return
       symbolInputRef.current?.focus()
+      // Select existing content so a fresh keystroke overwrites the current
+      // symbol (e.g. after clicking a watchlist row, which fills the box).
+      // Skip for Backspace so it deletes one char instead of wiping the box.
+      if (e.key !== 'Backspace') symbolInputRef.current?.select()
       // Don't preventDefault — let the keystroke land naturally in the now-focused input
     }
     window.addEventListener('keydown', onKeyDown)
