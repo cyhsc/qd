@@ -231,9 +231,28 @@ def _build_report(result: ScreenResult) -> str:
 # Logic evaluation
 # ---------------------------------------------------------------------------
 
+def _group_quorum(values: list[bool], op: str, min_match: int | None) -> bool:
+    """
+    Whether a group of condition results passes.
+
+      "AND" — every condition passes
+      "OR"  — at least one passes
+      "NOF" — at least ``min_match`` pass (partial / "N of M" matching);
+              min_match is clamped to [1, len(values)]
+    """
+    if not values:
+        return True
+    if op == "OR":
+        return any(values)
+    if op == "NOF":
+        need = min(max(int(min_match or 1), 1), len(values))
+        return sum(1 for v in values if v) >= need
+    return all(values)  # AND (default)
+
+
 def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> bool:
     """
-    Evaluate verdict using optional AND/OR group logic.
+    Evaluate verdict using optional AND/OR/N-of group logic.
 
     If logic is None or has no groups, falls back to: AND all conditions
     whose verdict_role is not None.
@@ -242,7 +261,11 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
       {
         "operator": "AND" | "OR",   // how to combine groups (default AND)
         "groups": [
-          { "operator": "AND" | "OR", "conditions": ["cond_name", ...] },
+          {
+            "operator":  "AND" | "OR" | "NOF",   // NOF = at least min_match
+            "min_match": 2,                       // only used when NOF
+            "conditions": ["cond_name", ...],
+          },
           ...
         ]
       }
@@ -265,7 +288,7 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
         if not names:
             continue
         values = [result_map.get(n, False) for n in names]
-        group_verdicts.append(all(values) if group_op == "AND" else any(values))
+        group_verdicts.append(_group_quorum(values, group_op, group.get("min_match")))
 
     if not group_verdicts:
         return True

@@ -749,7 +749,25 @@ function LogicBuilder({ logic, allConditions, onChange }) {
   }
 
   function setGroupOp(gi, op) {
-    const groups = logic.groups.map((g, i) => i !== gi ? g : { ...g, operator: op })
+    const groups = logic.groups.map((g, i) => {
+      if (i !== gi) return g
+      const next = { ...g, operator: op }
+      // Seed a sensible min_match the first time a group becomes "N of".
+      if (op === 'NOF') {
+        const n = g.conditions.length
+        next.min_match = Math.min(Math.max(g.min_match ?? 2, 1), Math.max(n, 1))
+      }
+      return next
+    })
+    onChange({ ...logic, groups })
+  }
+
+  function setGroupMinMatch(gi, value) {
+    const groups = logic.groups.map((g, i) => {
+      if (i !== gi) return g
+      const n = g.conditions.length
+      return { ...g, min_match: Math.min(Math.max(value, 1), Math.max(n, 1)) }
+    })
     onChange({ ...logic, groups })
   }
 
@@ -763,17 +781,26 @@ function LogicBuilder({ logic, allConditions, onChange }) {
     onChange({ ...logic, groups: groups.length ? groups : [{ operator: 'AND', conditions: [] }] })
   }
 
+  // Keep an "N of" group's min_match within [1, #conditions] as the set changes.
+  function clampMinMatch(group) {
+    if (group.operator !== 'NOF' || group.min_match == null) return group
+    const n = group.conditions.length
+    return { ...group, min_match: Math.min(Math.max(group.min_match, 1), Math.max(n, 1)) }
+  }
+
   function addCondToGroup(gi, cond) {
     if (!cond) return
     const groups = logic.groups.map((g, i) =>
-      i !== gi || g.conditions.includes(cond) ? g : { ...g, conditions: [...g.conditions, cond] }
+      i !== gi || g.conditions.includes(cond)
+        ? g
+        : clampMinMatch({ ...g, conditions: [...g.conditions, cond] })
     )
     onChange({ ...logic, groups })
   }
 
   function removeCondFromGroup(gi, cond) {
     const groups = logic.groups.map((g, i) =>
-      i !== gi ? g : { ...g, conditions: g.conditions.filter(c => c !== cond) }
+      i !== gi ? g : clampMinMatch({ ...g, conditions: g.conditions.filter(c => c !== cond) })
     )
     onChange({ ...logic, groups })
   }
@@ -816,6 +843,25 @@ function LogicBuilder({ logic, allConditions, onChange }) {
             </span>
             <button style={opBtn(group.operator === 'AND')} onClick={() => setGroupOp(gi, 'AND')}>AND</button>
             <button style={opBtn(group.operator === 'OR')}  onClick={() => setGroupOp(gi, 'OR')}>OR</button>
+            <button style={opBtn(group.operator === 'NOF')} onClick={() => setGroupOp(gi, 'NOF')}>N OF</button>
+            {group.operator === 'NOF' && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: 'var(--text-muted)' }}>
+                <input
+                  type="number"
+                  min={1}
+                  max={Math.max(group.conditions.length, 1)}
+                  value={group.min_match ?? 1}
+                  onChange={e => setGroupMinMatch(gi, Number(e.target.value))}
+                  style={{
+                    width: '34px', height: '22px', padding: '0 4px', fontSize: '10px',
+                    background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                    borderRadius: '3px', color: 'var(--text-primary)', outline: 'none',
+                    textAlign: 'center',
+                  }}
+                />
+                of {group.conditions.length}
+              </span>
+            )}
             <button
               onClick={() => removeGroup(gi)}
               title="Remove group"
@@ -880,7 +926,8 @@ function LogicBuilder({ logic, allConditions, onChange }) {
       </button>
 
       <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-        Conditions not in any group are ignored for the verdict.
+        A group passes when all (AND), any (OR), or at least N (N OF) of its
+        conditions pass. Conditions not in any group are ignored for the verdict.
       </div>
     </div>
   )
