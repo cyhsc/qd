@@ -231,13 +231,16 @@ def _build_report(result: ScreenResult) -> str:
 # Logic evaluation
 # ---------------------------------------------------------------------------
 
-def _group_quorum(values: list[bool], op: str, min_match: int | None) -> bool:
+def _quorum(values: list[bool], op: str, min_match: int | None) -> bool:
     """
-    Whether a group of condition results passes.
+    Whether a set of boolean verdicts passes under the given operator.
 
-      "AND" — every condition passes
-      "OR"  — at least one passes
-      "NOF" — at least ``min_match`` pass (partial / "N of M" matching);
+    Used both for a group (over its conditions) and for the top level
+    (over its groups).
+
+      "AND" — every value is True
+      "OR"  — at least one is True
+      "NOF" — at least ``min_match`` are True (partial / "N of M" matching);
               min_match is clamped to [1, len(values)]
     """
     if not values:
@@ -259,7 +262,8 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
 
     logic shape:
       {
-        "operator": "AND" | "OR",   // how to combine groups (default AND)
+        "operator":  "AND" | "OR" | "NOF",   // how to combine groups (default AND)
+        "min_match": 2,                        // only used when top operator is NOF
         "groups": [
           {
             "operator":  "AND" | "OR" | "NOF",   // NOF = at least min_match
@@ -288,11 +292,11 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
         if not names:
             continue
         values = [result_map.get(n, False) for n in names]
-        group_verdicts.append(_group_quorum(values, group_op, group.get("min_match")))
+        group_verdicts.append(_quorum(values, group_op, group.get("min_match")))
 
     if not group_verdicts:
         return True
-    return all(group_verdicts) if top_op == "AND" else any(group_verdicts)
+    return _quorum(group_verdicts, top_op, logic.get("min_match"))
 
 
 # ---------------------------------------------------------------------------

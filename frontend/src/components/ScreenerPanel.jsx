@@ -745,7 +745,18 @@ export function ScreenerPanel({
 
 function LogicBuilder({ logic, allConditions, onChange }) {
   function setTopOp(op) {
-    onChange({ ...logic, operator: op })
+    const next = { ...logic, operator: op }
+    // Seed a sensible top-level min_match the first time it becomes "N of".
+    if (op === 'NOF') {
+      const n = logic.groups.length
+      next.min_match = Math.min(Math.max(logic.min_match ?? 2, 1), Math.max(n, 1))
+    }
+    onChange(next)
+  }
+
+  function setTopMinMatch(value) {
+    const n = logic.groups.length
+    onChange({ ...logic, min_match: Math.min(Math.max(value, 1), Math.max(n, 1)) })
   }
 
   function setGroupOp(gi, op) {
@@ -771,14 +782,23 @@ function LogicBuilder({ logic, allConditions, onChange }) {
     onChange({ ...logic, groups })
   }
 
+  // Keep a top-level "N of" min_match within [1, #groups] as groups change.
+  function withClampedTop(next) {
+    if (next.operator === 'NOF' && next.min_match != null) {
+      const n = next.groups.length
+      next.min_match = Math.min(Math.max(next.min_match, 1), Math.max(n, 1))
+    }
+    return next
+  }
+
   function addGroup() {
-    onChange({ ...logic, groups: [...logic.groups, { operator: 'AND', conditions: [] }] })
+    onChange(withClampedTop({ ...logic, groups: [...logic.groups, { operator: 'AND', conditions: [] }] }))
   }
 
   function removeGroup(gi) {
     // Always keep at least one group so logic mode is never empty
     const groups = logic.groups.filter((_, i) => i !== gi)
-    onChange({ ...logic, groups: groups.length ? groups : [{ operator: 'AND', conditions: [] }] })
+    onChange(withClampedTop({ ...logic, groups: groups.length ? groups : [{ operator: 'AND', conditions: [] }] }))
   }
 
   // Keep an "N of" group's min_match within [1, #conditions] as the set changes.
@@ -823,10 +843,29 @@ function LogicBuilder({ logic, allConditions, onChange }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {/* Top-level operator — only relevant with more than one group */}
       {multiGroup && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>Combine groups with</span>
           <button style={opBtn(logic.operator === 'AND')} onClick={() => setTopOp('AND')}>AND</button>
           <button style={opBtn(logic.operator === 'OR')}  onClick={() => setTopOp('OR')}>OR</button>
+          <button style={opBtn(logic.operator === 'NOF')} onClick={() => setTopOp('NOF')}>N OF</button>
+          {logic.operator === 'NOF' && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: 'var(--text-muted)' }}>
+              <input
+                type="number"
+                min={1}
+                max={Math.max(logic.groups.length, 1)}
+                value={logic.min_match ?? 1}
+                onChange={e => setTopMinMatch(Number(e.target.value))}
+                style={{
+                  width: '34px', height: '22px', padding: '0 4px', fontSize: '10px',
+                  background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                  borderRadius: '3px', color: 'var(--text-primary)', outline: 'none',
+                  textAlign: 'center',
+                }}
+              />
+              of {logic.groups.length} groups
+            </span>
+          )}
         </div>
       )}
 
