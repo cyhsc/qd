@@ -44,8 +44,10 @@ logger = logging.getLogger(__name__)
 _CONDITIONS: dict[str, dict] = {
     # ── RWB ──────────────────────────────────────────────────────────────────
     "rwb_gap_positive": {
-        "description": "RWB gap positive — fast EMA cluster is above slow cluster (bullish alignment)",
-        "fn": lambda m, r, s: r.rwb.sign == Sign.POSITIVE,
+        # Parametric (value kind): default ">= 0" captures a non-negative RWB gap.
+        # _apply_condition_overrides rebuilds this fn/description from user config.
+        "description": "RWB gap ≥ 0 — fast/slow EMA cluster separation is at least 0",
+        "fn": lambda m, r, s: r.rwb.value >= 0,
     },
     "rwb_gap_rising": {
         "description": "RWB gap rising — bullish separation is widening (momentum building)",
@@ -343,10 +345,35 @@ def _collect_condition_names(logic: dict | None) -> set[str]:
 # Parametric condition setup (shared by screen_individual and screen_history)
 # ---------------------------------------------------------------------------
 
-_OP_SYMBOL = {"gt": ">", "eq": "=", "lt": "1≤n<"}
-_OP_LABEL  = {"gt": "greater than", "eq": "equal to", "lt": "at least 1 but less than"}
+_OP_SYMBOL = {"gt": ">", "gte": "≥", "eq": "=", "lte": "≤", "lt": "1≤n<"}
+_OP_LABEL  = {
+    "gt":  "greater than",
+    "gte": "at least",
+    "eq":  "equal to",
+    "lte": "at most",
+    "lt":  "at least 1 but less than",
+}
+
+# For "value"-kind conditions (a raw float, not a bar streak) "lt"/"lte" have
+# plain numeric meaning; the "1≤n<" symbol/label above is bar-streak specific.
+_VALUE_OP_SYMBOL = {"gt": ">", "gte": "≥", "eq": "=", "lte": "≤", "lt": "<"}
+_VALUE_OP_LABEL  = {
+    "gt":  "greater than",
+    "gte": "at least",
+    "eq":  "equal to",
+    "lte": "at most",
+    "lt":  "less than",
+}
 
 _PARAMETRIC = {
+    # RWB gap as a raw value (float), not a bar streak. Default ">= 0" captures
+    # a non-negative gap (fast EMA cluster at or above the slow cluster).
+    "rwb_gap_positive": {
+        "kind": "value",
+        "default_threshold": 0.0, "default_op": "gte",
+        "description_tmpl": "RWB gap {sym} {thr} — fast/slow EMA cluster separation is {lbl} {thr}",
+        "value_fn": lambda m, r, s: r.rwb.value,
+    },
     "sqz_consecutive_positive_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "SQZ consecutive positive bars {sym} {thr} — bars since momentum last turned positive is {lbl} {thr}",
@@ -388,27 +415,40 @@ _PARAMETRIC = {
 def _apply_condition_overrides(overrides: dict) -> None:
     """Rebuild parametric condition descriptions and fns from user settings."""
     for cname, meta in _PARAMETRIC.items():
-        ov        = overrides.get(cname, {})
-        threshold = int(ov.get("threshold", meta["default_threshold"]))
-        op        = ov.get("op", meta["default_op"])
-        op_sym    = _OP_SYMBOL.get(op, ">")
-        op_lbl    = _OP_LABEL.get(op, "greater than")
+        ov   = overrides.get(cname, {})
+        kind = meta.get("kind", "bars")           # "bars" (int streak) | "value" (float)
+        if kind == "value":
+            threshold = float(ov.get("threshold", meta["default_threshold"]))
+            thr_txt   = f"{threshold:g}"
+            op        = ov.get("op", meta["default_op"])
+            op_sym    = _VALUE_OP_SYMBOL.get(op, "≥")
+            op_lbl    = _VALUE_OP_LABEL.get(op, "at least")
+        else:
+            threshold = int(ov.get("threshold", meta["default_threshold"]))
+            thr_txt   = str(threshold)
+            op        = ov.get("op", meta["default_op"])
+            op_sym    = _OP_SYMBOL.get(op, ">")
+            op_lbl    = _OP_LABEL.get(op, "greater than")
         _CONDITIONS[cname]["description"] = meta["description_tmpl"].format(
-            sym=op_sym, thr=threshold, lbl=op_lbl,
+            sym=op_sym, thr=thr_txt, lbl=op_lbl,
         )
         value_fn = meta["value_fn"]
-        def _make_fn(vfn, t, o):
+        def _make_fn(vfn, t, o, k):
             def _fn(m, r, s):
                 n = vfn(m, r, s)
-                if o == "gt": return n > t
-                if o == "eq": return n == t
-                # "lt" requires an active streak: a count of 0 means the
-                # condition isn't currently true at all (e.g. fast_width is
-                # negative), which should NOT pass "fewer than t bars".
-                if o == "lt": return 0 < n < t
+                if o == "gt":  return n > t
+                if o == "gte": return n >= t
+                if o == "eq":  return n == t
+                if o == "lte": return n <= t
+                if o == "lt":
+                    # For a raw value, "<" is plain. For a bar streak, "lt"
+                    # requires an active streak: a count of 0 means the condition
+                    # isn't currently true at all (e.g. fast_width is negative),
+                    # which should NOT pass "fewer than t bars".
+                    return n < t if k == "value" else 0 < n < t
                 return False
             return _fn
-        _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op)
+        _CONDITIONS[cname]["fn"] = _make_fn(value_fn, threshold, op, kind)
 
 
 def _effective_verdict_rules(overrides: dict) -> dict[str, bool]:

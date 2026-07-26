@@ -360,7 +360,7 @@ export default function App() {
   // Parametric conditions also include their default threshold / op.
   const DEFAULT_SCREENER_CONDITIONS = {
     // RWB — rwb_gap_positive and rwb_gap_rising are required by default
-    rwb_gap_positive:                         { verdict_role: true },
+    rwb_gap_positive:                         { verdict_role: true, threshold: 0, op: 'gte' },
     rwb_gap_rising:                           { verdict_role: true },
     rwb_slow_width_rising:                    { verdict_role: null },
     rwb_fast_above_slow:                      { verdict_role: null },

@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 // ── Condition display metadata ────────────────────────────────────────────────
 
 const COND_META = {
-  rwb_gap_positive:                         { short: 'RWB+',   label: 'RWB gap positive'          },
+  rwb_gap_positive:                         { short: 'RWB≥',   label: 'RWB gap ≥ value'           },
   rwb_gap_rising:                           { short: 'RWB↑',   label: 'RWB gap rising'            },
   rwb_slow_width_rising:                    { short: 'SW↑',    label: 'RWB slow-width rising'     },
   rwb_fast_width_rising:                    { short: 'FW↑',    label: 'RWB fast-width rising'     },
@@ -39,6 +39,7 @@ const ALL_CONDITIONS = [
 
 // Conditions that have a threshold + operator parameter
 const PARAMETRIC_CONDITIONS = [
+  'rwb_gap_positive',
   'sqz_consecutive_positive_bars',
   'macd_histogram_consecutive_positive_bars',
   'rwb_bars_since_fast_above_slow',
@@ -47,6 +48,26 @@ const PARAMETRIC_CONDITIONS = [
   'rwb_slow_width_consecutive_rising_bars',
   'rwb_fast_width_consecutive_rising_bars',
 ]
+
+// Per-condition parameter metadata. Bar-count conditions (the default) compare
+// an integer streak; "value" conditions compare a raw float (e.g. the RWB gap).
+const DEFAULT_PARAM_META = {
+  kind: 'bars', unit: 'bars', step: 1, min: 1, defOp: 'gt', defThreshold: 3,
+  ops: ['gt', 'eq', 'lt'],
+}
+const PARAM_META = {
+  rwb_gap_positive: {
+    kind: 'value', unit: 'value', step: 0.1, min: null, defOp: 'gte', defThreshold: 0,
+    ops: ['gte', 'gt', 'eq', 'lte', 'lt'],
+  },
+}
+const paramMeta = (name) => PARAM_META[name] ?? DEFAULT_PARAM_META
+
+// Operator display symbols. Bar-streak "lt" reads "1≤n<"; a value "lt" is plain "<".
+const OP_LABEL = {
+  bars:  { gt: '>', eq: '=', lt: '1≤n<' },
+  value: { gt: '>', gte: '≥', eq: '=', lte: '≤', lt: '<' },
+}
 
 function shortName(name)  { return COND_META[name]?.short ?? name }
 function labelName(name)  { return COND_META[name]?.label ?? name }
@@ -504,11 +525,13 @@ export function ScreenerPanel({
                       </span>
                     </div>
                     {/* Row 2: parametric controls (threshold + op) */}
-                    {isParametric && (
+                    {isParametric && (() => {
+                      const pm = paramMeta(name)
+                      return (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '6px' }}>
-                        <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>bars</span>
+                        <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>{pm.unit}</span>
                         <select
-                          value={p.op ?? 'gt'}
+                          value={p.op ?? pm.defOp}
                           onChange={e => onConditionParam(name, 'op', e.target.value)}
                           style={{
                             height: '22px', padding: '0 4px', fontSize: '10px',
@@ -516,15 +539,28 @@ export function ScreenerPanel({
                             borderRadius: '3px', color: 'var(--text-primary)', cursor: 'pointer', outline: 'none',
                           }}
                         >
-                          <option value="gt">&gt;</option>
-                          <option value="eq">=</option>
-                          <option value="lt" title="active streak shorter than threshold">1≤n&lt;</option>
+                          {pm.ops.map(o => (
+                            <option
+                              key={o}
+                              value={o}
+                              title={pm.kind === 'bars' && o === 'lt' ? 'active streak shorter than threshold' : undefined}
+                            >
+                              {OP_LABEL[pm.kind][o]}
+                            </option>
+                          ))}
                         </select>
                         <input
                           type="number"
-                          min="1"
-                          value={p.threshold ?? 3}
-                          onChange={e => onConditionParam(name, 'threshold', Math.max(1, parseInt(e.target.value) || 1))}
+                          step={pm.step}
+                          {...(pm.min != null ? { min: pm.min } : {})}
+                          value={p.threshold ?? pm.defThreshold}
+                          onChange={e => {
+                            const raw = e.target.value
+                            let v = pm.kind === 'value' ? parseFloat(raw) : parseInt(raw)
+                            if (Number.isNaN(v)) v = pm.defThreshold
+                            if (pm.min != null) v = Math.max(pm.min, v)
+                            onConditionParam(name, 'threshold', v)
+                          }}
                           style={{
                             width: '44px', height: '22px', padding: '0 4px', fontSize: '10px',
                             background: 'var(--bg-panel)', border: '1px solid var(--border)',
@@ -532,7 +568,8 @@ export function ScreenerPanel({
                           }}
                         />
                       </div>
-                    )}
+                      )
+                    })()}
                   </div>
                 )
               })}
