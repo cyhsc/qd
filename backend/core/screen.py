@@ -253,14 +253,44 @@ def _quorum(values: list[bool], op: str, min_match: int | None) -> bool:
     return all(values)  # AND (default)
 
 
+def _group_is_empty(group: dict) -> bool:
+    """A group contributes nothing if it has no conditions and no non-empty children."""
+    if group.get("conditions"):
+        return False
+    return all(_group_is_empty(child) for child in group.get("groups", []))
+
+
+def _eval_group(group: dict, result_map: dict[str, bool]) -> bool:
+    """
+    Recursively evaluate a single group's verdict.
+
+    A group's value set is the union of:
+      - each of its leaf conditions' pass/fail, and
+      - each non-empty child group's (recursive) verdict,
+    combined with the group's operator (AND / OR / NOF via _quorum).
+
+    An empty group (no conditions, no non-empty children) yields True so it
+    can't fail an enclosing AND — matching the "skip empty group" behavior of
+    the original flat evaluator.
+    """
+    op = group.get("operator", "AND").upper()
+    values = [result_map.get(n, False) for n in group.get("conditions", [])]
+    for child in group.get("groups", []):
+        if _group_is_empty(child):
+            continue
+        values.append(_eval_group(child, result_map))
+    return _quorum(values, op, group.get("min_match"))
+
+
 def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> bool:
     """
-    Evaluate verdict using optional AND/OR/N-of group logic.
+    Evaluate verdict using optional AND/OR/N-of group logic, with arbitrarily
+    nested sub-groups.
 
     If logic is None or has no groups, falls back to: AND all conditions
     whose verdict_role is not None.
 
-    logic shape:
+    logic shape (a group may recursively contain child groups):
       {
         "operator":  "AND" | "OR" | "NOF",   // how to combine groups (default AND)
         "min_match": 2,                        // only used when top operator is NOF
@@ -268,7 +298,8 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
           {
             "operator":  "AND" | "OR" | "NOF",   // NOF = at least min_match
             "min_match": 2,                       // only used when NOF
-            "conditions": ["cond_name", ...],
+            "conditions": ["cond_name", ...],    // leaf conditions
+            "groups": [ { ... }, ... ],          // optional nested sub-groups
           },
           ...
         ]
@@ -282,21 +313,30 @@ def _evaluate_logic(cond_results: list[ConditionResult], logic: dict | None) -> 
         )
 
     result_map = {c.name: c.passed for c in cond_results}
-    groups     = logic.get("groups", [])
-    top_op     = logic.get("operator", "AND").upper()
+    # The root behaves like a group over logic["groups"].
+    return _eval_group(
+        {
+            "operator":  logic.get("operator", "AND"),
+            "min_match": logic.get("min_match"),
+            "groups":    logic.get("groups", []),
+        },
+        result_map,
+    )
 
-    group_verdicts = []
-    for group in groups:
-        names    = group.get("conditions", [])
-        group_op = group.get("operator", "AND").upper()
-        if not names:
-            continue
-        values = [result_map.get(n, False) for n in names]
-        group_verdicts.append(_quorum(values, group_op, group.get("min_match")))
 
-    if not group_verdicts:
-        return True
-    return _quorum(group_verdicts, top_op, logic.get("min_match"))
+def _collect_condition_names(logic: dict | None) -> set[str]:
+    """All leaf condition names referenced anywhere in a (possibly nested) logic tree."""
+    names: set[str] = set()
+
+    def walk(group: dict) -> None:
+        names.update(group.get("conditions", []))
+        for child in group.get("groups", []):
+            walk(child)
+
+    if logic:
+        for g in logic.get("groups", []):
+            walk(g)
+    return names
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +584,7 @@ def screen_history(
     rules = _effective_verdict_rules(overrides)
     logic = overrides.get("_logic")
     if logic and logic.get("groups"):
-        relevant = {n for g in logic["groups"] for n in g.get("conditions", [])}
+        relevant = _collect_condition_names(logic)
     else:
         relevant = {n for n, req in rules.items() if req is not None}
     specs = [(n, _CONDITIONS[n]["fn"], rules.get(n)) for n in sorted(relevant) if n in _CONDITIONS]

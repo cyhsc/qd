@@ -189,7 +189,7 @@ export function ScreenerPanel({
   }, [activeConfig])
 
   const logicConditionSet = useMemo(
-    () => new Set(effectiveLogic.groups.flatMap(g => g.conditions ?? [])),
+    () => new Set(collectLogicConditions(effectiveLogic)),
     [effectiveLogic],
   )
 
@@ -743,7 +743,74 @@ export function ScreenerPanel({
 
 // ── LogicBuilder ──────────────────────────────────────────────────────────────
 
+// Deepest group nesting the UI allows (top-level groups = depth 1).
+const MAX_GROUP_DEPTH = 3
+
+// All leaf condition names referenced anywhere in a (possibly nested) logic tree.
+function collectLogicConditions(logic) {
+  const out = []
+  const walk = (group) => {
+    for (const c of group.conditions ?? []) out.push(c)
+    for (const child of group.groups ?? []) walk(child)
+  }
+  for (const g of logic?.groups ?? []) walk(g)
+  return out
+}
+
+// A group contributes nothing if it has no conditions and no non-empty children.
+function groupIsEmpty(group) {
+  if ((group.conditions ?? []).length) return false
+  return (group.groups ?? []).every(groupIsEmpty)
+}
+
+// How many child verdicts a group combines: leaf conditions + non-empty sub-groups.
+// This is the denominator for the group's "N of M" control (mirrors the backend,
+// which skips empty groups).
+function groupChildCount(group) {
+  const conds = (group.conditions ?? []).length
+  const subs  = (group.groups ?? []).filter(g => !groupIsEmpty(g)).length
+  return conds + subs
+}
+
+// Immutably transform the group at `path` (array of indices into nested `groups`).
+// fn(group) -> newGroup, or null to delete it.
+function updateGroupAtPath(logic, path, fn) {
+  const recur = (groups, depth) =>
+    groups
+      .map((g, i) => {
+        if (i !== path[depth]) return g
+        if (depth === path.length - 1) return fn(g)
+        return { ...g, groups: recur(g.groups ?? [], depth + 1) }
+      })
+      .filter(Boolean)
+  return { ...logic, groups: recur(logic.groups, 0) }
+}
+
+// Re-clamp every "N of" min_match into [1, childCount] after any structural change,
+// and drop empty `groups` keys so the shape stays clean.
+function reclampLogic(logic) {
+  const fixGroup = (g) => {
+    const groups = (g.groups ?? []).map(fixGroup)
+    const next = { ...g }
+    if (groups.length) next.groups = groups
+    else delete next.groups
+    if (next.operator === 'NOF' && next.min_match != null) {
+      const n = groupChildCount(next)
+      next.min_match = Math.min(Math.max(next.min_match, 1), Math.max(n, 1))
+    }
+    return next
+  }
+  const groups = (logic.groups ?? []).map(fixGroup)
+  const top = { ...logic, groups }
+  if (top.operator === 'NOF' && top.min_match != null) {
+    top.min_match = Math.min(Math.max(top.min_match, 1), Math.max(groups.length, 1))
+  }
+  return top
+}
+
 function LogicBuilder({ logic, allConditions, onChange }) {
+  const commit = (next) => onChange(reclampLogic(next))
+
   function setTopOp(op) {
     const next = { ...logic, operator: op }
     // Seed a sensible top-level min_match the first time it becomes "N of".
@@ -751,78 +818,60 @@ function LogicBuilder({ logic, allConditions, onChange }) {
       const n = logic.groups.length
       next.min_match = Math.min(Math.max(logic.min_match ?? 2, 1), Math.max(n, 1))
     }
-    onChange(next)
+    commit(next)
   }
 
   function setTopMinMatch(value) {
-    const n = logic.groups.length
-    onChange({ ...logic, min_match: Math.min(Math.max(value, 1), Math.max(n, 1)) })
-  }
-
-  function setGroupOp(gi, op) {
-    const groups = logic.groups.map((g, i) => {
-      if (i !== gi) return g
-      const next = { ...g, operator: op }
-      // Seed a sensible min_match the first time a group becomes "N of".
-      if (op === 'NOF') {
-        const n = g.conditions.length
-        next.min_match = Math.min(Math.max(g.min_match ?? 2, 1), Math.max(n, 1))
-      }
-      return next
-    })
-    onChange({ ...logic, groups })
-  }
-
-  function setGroupMinMatch(gi, value) {
-    const groups = logic.groups.map((g, i) => {
-      if (i !== gi) return g
-      const n = g.conditions.length
-      return { ...g, min_match: Math.min(Math.max(value, 1), Math.max(n, 1)) }
-    })
-    onChange({ ...logic, groups })
-  }
-
-  // Keep a top-level "N of" min_match within [1, #groups] as groups change.
-  function withClampedTop(next) {
-    if (next.operator === 'NOF' && next.min_match != null) {
-      const n = next.groups.length
-      next.min_match = Math.min(Math.max(next.min_match, 1), Math.max(n, 1))
-    }
-    return next
+    commit({ ...logic, min_match: value })
   }
 
   function addGroup() {
-    onChange(withClampedTop({ ...logic, groups: [...logic.groups, { operator: 'AND', conditions: [] }] }))
+    commit({ ...logic, groups: [...logic.groups, { operator: 'AND', conditions: [] }] })
   }
 
-  function removeGroup(gi) {
-    // Always keep at least one group so logic mode is never empty
-    const groups = logic.groups.filter((_, i) => i !== gi)
-    onChange(withClampedTop({ ...logic, groups: groups.length ? groups : [{ operator: 'AND', conditions: [] }] }))
+  // ── Path-addressed mutators (operate on a group anywhere in the tree) ────────
+  function setGroupOp(path, op) {
+    commit(updateGroupAtPath(logic, path, g => {
+      const next = { ...g, operator: op }
+      // Seed a sensible min_match the first time a group becomes "N of".
+      if (op === 'NOF') {
+        const n = groupChildCount(g)
+        next.min_match = Math.min(Math.max(g.min_match ?? 2, 1), Math.max(n, 1))
+      }
+      return next
+    }))
   }
 
-  // Keep an "N of" group's min_match within [1, #conditions] as the set changes.
-  function clampMinMatch(group) {
-    if (group.operator !== 'NOF' || group.min_match == null) return group
-    const n = group.conditions.length
-    return { ...group, min_match: Math.min(Math.max(group.min_match, 1), Math.max(n, 1)) }
+  function setGroupMinMatch(path, value) {
+    commit(updateGroupAtPath(logic, path, g => ({ ...g, min_match: value })))
   }
 
-  function addCondToGroup(gi, cond) {
+  function addCondToGroup(path, cond) {
     if (!cond) return
-    const groups = logic.groups.map((g, i) =>
-      i !== gi || g.conditions.includes(cond)
+    commit(updateGroupAtPath(logic, path, g =>
+      (g.conditions ?? []).includes(cond)
         ? g
-        : clampMinMatch({ ...g, conditions: [...g.conditions, cond] })
-    )
-    onChange({ ...logic, groups })
+        : { ...g, conditions: [...(g.conditions ?? []), cond] }
+    ))
   }
 
-  function removeCondFromGroup(gi, cond) {
-    const groups = logic.groups.map((g, i) =>
-      i !== gi ? g : clampMinMatch({ ...g, conditions: g.conditions.filter(c => c !== cond) })
-    )
-    onChange({ ...logic, groups })
+  function removeCondFromGroup(path, cond) {
+    commit(updateGroupAtPath(logic, path, g =>
+      ({ ...g, conditions: (g.conditions ?? []).filter(c => c !== cond) })
+    ))
+  }
+
+  function addSubGroup(path) {
+    commit(updateGroupAtPath(logic, path, g =>
+      ({ ...g, groups: [...(g.groups ?? []), { operator: 'AND', conditions: [] }] })
+    ))
+  }
+
+  function removeGroup(path) {
+    const next = updateGroupAtPath(logic, path, () => null)
+    // Always keep at least one top-level group so logic mode is never empty.
+    if (!next.groups.length) next.groups = [{ operator: 'AND', conditions: [] }]
+    commit(next)
   }
 
   const btnBase = {
@@ -871,84 +920,22 @@ function LogicBuilder({ logic, allConditions, onChange }) {
 
       {/* Groups */}
       {logic.groups.map((group, gi) => (
-        <div key={gi} style={{
-          padding: '6px 8px', borderRadius: '5px',
-          background: 'var(--bg-panel)', border: '1px solid var(--border)',
-        }}>
-          {/* Group header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px' }}>
-            <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>
-              Group {gi + 1}
-            </span>
-            <button style={opBtn(group.operator === 'AND')} onClick={() => setGroupOp(gi, 'AND')}>AND</button>
-            <button style={opBtn(group.operator === 'OR')}  onClick={() => setGroupOp(gi, 'OR')}>OR</button>
-            <button style={opBtn(group.operator === 'NOF')} onClick={() => setGroupOp(gi, 'NOF')}>N OF</button>
-            {group.operator === 'NOF' && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: 'var(--text-muted)' }}>
-                <input
-                  type="number"
-                  min={1}
-                  max={Math.max(group.conditions.length, 1)}
-                  value={group.min_match ?? 1}
-                  onChange={e => setGroupMinMatch(gi, Number(e.target.value))}
-                  style={{
-                    width: '34px', height: '22px', padding: '0 4px', fontSize: '10px',
-                    background: 'var(--bg-raised)', border: '1px solid var(--border)',
-                    borderRadius: '3px', color: 'var(--text-primary)', outline: 'none',
-                    textAlign: 'center',
-                  }}
-                />
-                of {group.conditions.length}
-              </span>
-            )}
-            <button
-              onClick={() => removeGroup(gi)}
-              title="Remove group"
-              style={{ ...btnBase, marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '13px' }}
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Condition chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginBottom: '5px' }}>
-            {group.conditions.map(cond => (
-              <span key={cond} style={{
-                display: 'inline-flex', alignItems: 'center', gap: '3px',
-                padding: '2px 6px', borderRadius: '3px', fontSize: '10px',
-                background: 'rgba(41,98,255,0.12)', color: 'var(--blue)',
-                fontFamily: 'var(--font-mono)', fontWeight: 600,
-              }}>
-                {COND_META[cond]?.short ?? cond}
-                <button
-                  onClick={() => removeCondFromGroup(gi, cond)}
-                  style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: '11px', padding: '0', lineHeight: 1 }}
-                >✕</button>
-              </span>
-            ))}
-          </div>
-
-          {/* Add condition dropdown */}
-          <select
-            value=""
-            onChange={e => { addCondToGroup(gi, e.target.value); e.target.value = '' }}
-            style={{
-              width: '100%', height: '22px', padding: '0 4px', fontSize: '10px',
-              background: 'var(--bg-raised)', border: '1px solid var(--border)',
-              borderRadius: '3px', color: 'var(--text-muted)', cursor: 'pointer', outline: 'none',
-            }}
-          >
-            <option value="">+ add condition…</option>
-            {allConditions
-              .filter(c => !group.conditions.includes(c))
-              .map(c => (
-                <option key={c} value={c}>
-                  {COND_META[c]?.short ?? c} — {COND_META[c]?.label ?? c}
-                </option>
-              ))
-            }
-          </select>
-        </div>
+        <GroupEditor
+          key={gi}
+          group={group}
+          path={[gi]}
+          depth={1}
+          label={`Group ${gi + 1}`}
+          allConditions={allConditions}
+          opBtn={opBtn}
+          btnBase={btnBase}
+          onSetOp={setGroupOp}
+          onSetMinMatch={setGroupMinMatch}
+          onAddCond={addCondToGroup}
+          onRemoveCond={removeCondFromGroup}
+          onAddSubGroup={addSubGroup}
+          onRemove={removeGroup}
+        />
       ))}
 
       {/* Add group button */}
@@ -966,8 +953,146 @@ function LogicBuilder({ logic, allConditions, onChange }) {
 
       <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4 }}>
         A group passes when all (AND), any (OR), or at least N (N OF) of its
-        conditions pass. Conditions not in any group are ignored for the verdict.
+        members pass — where members are its conditions and any nested
+        sub-groups. Conditions not in any group are ignored for the verdict.
       </div>
+    </div>
+  )
+}
+
+// ── GroupEditor (recursive) ─────────────────────────────────────────────────
+// Renders a single group — its operator, conditions, and nested sub-groups —
+// and recurses for each sub-group. All mutations are addressed by `path`
+// (an array of indices into the nested `groups` arrays).
+
+function GroupEditor({
+  group, path, depth, label, allConditions,
+  opBtn, btnBase, onSetOp, onSetMinMatch, onAddCond, onRemoveCond,
+  onAddSubGroup, onRemove,
+}) {
+  const conditions = group.conditions ?? []
+  const subGroups  = group.groups ?? []
+  const memberCount = groupChildCount(group)
+  const canNest = depth < MAX_GROUP_DEPTH
+
+  return (
+    <div style={{
+      padding: '6px 8px', borderRadius: '5px',
+      background: depth > 1 ? 'var(--bg-raised)' : 'var(--bg-panel)',
+      border: '1px solid var(--border)',
+    }}>
+      {/* Group header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '5px' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>
+          {label}
+        </span>
+        <button style={opBtn(group.operator === 'AND')} onClick={() => onSetOp(path, 'AND')}>AND</button>
+        <button style={opBtn(group.operator === 'OR')}  onClick={() => onSetOp(path, 'OR')}>OR</button>
+        <button style={opBtn(group.operator === 'NOF')} onClick={() => onSetOp(path, 'NOF')}>N OF</button>
+        {group.operator === 'NOF' && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: 'var(--text-muted)' }}>
+            <input
+              type="number"
+              min={1}
+              max={Math.max(memberCount, 1)}
+              value={group.min_match ?? 1}
+              onChange={e => onSetMinMatch(path, Number(e.target.value))}
+              style={{
+                width: '34px', height: '22px', padding: '0 4px', fontSize: '10px',
+                background: 'var(--bg-raised)', border: '1px solid var(--border)',
+                borderRadius: '3px', color: 'var(--text-primary)', outline: 'none',
+                textAlign: 'center',
+              }}
+            />
+            of {memberCount}
+          </span>
+        )}
+        <button
+          onClick={() => onRemove(path)}
+          title="Remove group"
+          style={{ ...btnBase, marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '13px' }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Condition chips */}
+      {conditions.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginBottom: '5px' }}>
+          {conditions.map(cond => (
+            <span key={cond} style={{
+              display: 'inline-flex', alignItems: 'center', gap: '3px',
+              padding: '2px 6px', borderRadius: '3px', fontSize: '10px',
+              background: 'rgba(41,98,255,0.12)', color: 'var(--blue)',
+              fontFamily: 'var(--font-mono)', fontWeight: 600,
+            }}>
+              {COND_META[cond]?.short ?? cond}
+              <button
+                onClick={() => onRemoveCond(path, cond)}
+                style={{ background: 'none', border: 'none', color: 'var(--blue)', cursor: 'pointer', fontSize: '11px', padding: '0', lineHeight: 1 }}
+              >✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Nested sub-groups */}
+      {subGroups.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', margin: '0 0 5px 10px', paddingLeft: '6px', borderLeft: '2px solid var(--border)' }}>
+          {subGroups.map((child, ci) => (
+            <GroupEditor
+              key={ci}
+              group={child}
+              path={[...path, ci]}
+              depth={depth + 1}
+              label="Subgroup"
+              allConditions={allConditions}
+              opBtn={opBtn}
+              btnBase={btnBase}
+              onSetOp={onSetOp}
+              onSetMinMatch={onSetMinMatch}
+              onAddCond={onAddCond}
+              onRemoveCond={onRemoveCond}
+              onAddSubGroup={onAddSubGroup}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Add condition dropdown */}
+      <select
+        value=""
+        onChange={e => { onAddCond(path, e.target.value); e.target.value = '' }}
+        style={{
+          width: '100%', height: '22px', padding: '0 4px', fontSize: '10px',
+          background: 'var(--bg-raised)', border: '1px solid var(--border)',
+          borderRadius: '3px', color: 'var(--text-muted)', cursor: 'pointer', outline: 'none',
+        }}
+      >
+        <option value="">+ add condition…</option>
+        {allConditions
+          .filter(c => !conditions.includes(c))
+          .map(c => (
+            <option key={c} value={c}>
+              {COND_META[c]?.short ?? c} — {COND_META[c]?.label ?? c}
+            </option>
+          ))
+        }
+      </select>
+
+      {/* Add nested sub-group */}
+      {canNest && (
+        <button
+          onClick={() => onAddSubGroup(path)}
+          style={{
+            ...btnBase, marginTop: '5px', alignSelf: 'flex-start',
+            background: 'none', color: 'var(--text-muted)',
+          }}
+        >
+          + Add subgroup
+        </button>
+      )}
     </div>
   )
 }
