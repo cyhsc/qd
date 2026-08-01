@@ -491,6 +491,14 @@ export function StockChart({
     if (volumeRef.current && volume?.length) volumeRef.current.setData(volume)
 
     applyVisibleRange(chartRef.current, candles, visibleDaysRef.current)
+    // Re-assert on the next frame: setData can trigger an internal auto-fit,
+    // and async indicator series settling afterward can nudge the time scale,
+    // either of which would otherwise leave the chart on a stale window.
+    requestAnimationFrame(() => {
+      if (chartRef.current && rawCandlesRef.current === candles) {
+        applyVisibleRange(chartRef.current, candles, visibleDaysRef.current)
+      }
+    })
 
     const last      = candles[candles.length - 1]
     const prev      = candles[candles.length - 2] ?? null

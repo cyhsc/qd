@@ -183,6 +183,8 @@ export default function App() {
   // Sidebar resize drag
   const sidebarDragRef  = useRef(null)
   const symbolInputRef  = useRef(null)
+  // Monotonic id for chart fetches so out-of-order responses can be discarded
+  const fetchSeqRef     = useRef(0)
   const handleSidebarMouseDown = useCallback((e) => {
     e.preventDefault()
     const startX = e.clientX
@@ -471,6 +473,11 @@ export default function App() {
   // and zoom the chart client-side based on the range selection
   const fetchStock = useCallback(async (sym, ivl) => {
     if (!sym) return
+    // Tag this request; if a newer selection starts before we finish, the
+    // stale response is discarded so it can't clobber the current symbol's
+    // data (and leave the chart parked on an old time window).
+    const seq = ++fetchSeqRef.current
+    const isStale = () => seq !== fetchSeqRef.current
     setLoading(true)
     setError(null)
     setEventsData(null)
@@ -483,6 +490,7 @@ export default function App() {
         fetch(`/api/stocks/${sym}/history?${params}`),
         fetch(`/api/stocks/${sym}/info`),
       ])
+      if (isStale()) return
 
       if (!histRes.ok) {
         const body = await histRes.json()
@@ -490,6 +498,7 @@ export default function App() {
       }
 
       const hist = await histRes.json()
+      if (isStale()) return
       setCandles(hist.candles)
       setVolume(hist.volume)
       if (infoRes.ok) setInfo(await infoRes.json())
@@ -497,15 +506,16 @@ export default function App() {
       // Fetch events in the background (non-blocking — chart shows immediately)
       fetch(`/api/stocks/${sym}/events`)
         .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d) setEventsData(d) })
+        .then(d => { if (d && !isStale()) setEventsData(d) })
         .catch(() => {})
     } catch (e) {
+      if (isStale()) return
       setError(e.message)
       setCandles(null)
       setVolume(null)
       setInfo(null)
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
   }, [])
 
