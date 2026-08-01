@@ -529,6 +529,11 @@ export default function App() {
     if (!sym || !hasAny) {
       setMaData({}); setGuppyData(null); setMacdData({}); setRwbData(null); setSqueezeData(null); return
     }
+    // Indicators write to the same chart series as the candles. Tie them to the
+    // current selection so a late response for a previous symbol can't call
+    // setData on the chart (which would shift the time scale off the latest bars).
+    const seq = fetchSeqRef.current
+    const isStale = () => seq !== fetchSeqRef.current
     const params = new URLSearchParams()
     if (ivl) params.set('interval', ivl)
     maCfgs.forEach(m   => params.append('ma',   m.period))
@@ -538,8 +543,9 @@ export default function App() {
     if (sqzCfgs.length)   params.set('squeeze', '1')
     try {
       const res = await fetch(`/api/stocks/${sym}/indicators?${params}`)
-      if (!res.ok) return
+      if (!res.ok || isStale()) return
       const data = await res.json()
+      if (isStale()) return
       setMaData(data.ma         ?? {})
       setGuppyData(data.guppy   ?? null)
       setMacdData(data.macd     ?? {})
