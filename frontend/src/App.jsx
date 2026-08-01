@@ -123,6 +123,7 @@ export default function App() {
 
   const [input,         setInput]         = useState('')
   const [symbol,        setSymbol]        = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)  // {id, name} | null
   const [range,         setRange]         = useState('1Y')
   const [interval,      setInterval]      = useState('D')
   const [chartType,     setChartType]     = useState(() => lsJson('qd_chart_type', 'candlestick'))
@@ -395,6 +396,12 @@ export default function App() {
     setActiveConfigId(created.id)
     return created
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestDeleteScreener = useCallback((id) => {
+    if (screenConfigs.length <= 1) return
+    const cfg = screenConfigs.find(c => c.id === id)
+    setConfirmDelete({ id, name: cfg?.name ?? '' })
+  }, [screenConfigs])
 
   const handleDeleteScreener = useCallback(async (id) => {
     if (screenConfigs.length <= 1) return
@@ -815,6 +822,36 @@ export default function App() {
     setInput(sym)
     fetchStock(sym, interval)
   }, [fetchStock, interval])
+
+  // Chart view: Up/Down arrows step through the active watchlist's symbols.
+  useEffect(() => {
+    if (topView !== 'chart') return
+    const onKeyDown = (e) => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      // Don't hijack arrows while typing / inside a control or open modal
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (analysisOpenRef.current) return
+
+      const list = watchlists.find(l => l.id === activeListId)
+      const syms = list?.symbols ?? []
+      if (syms.length === 0) return
+
+      const cur = syms.findIndex(s => s.symbol === symbol)
+      let next
+      if (cur === -1) {
+        next = e.key === 'ArrowDown' ? 0 : syms.length - 1
+      } else {
+        next = cur + (e.key === 'ArrowDown' ? 1 : -1)
+        if (next < 0 || next >= syms.length) return  // clamp at the ends
+      }
+      e.preventDefault()
+      selectSymbol(syms[next].symbol)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [topView, watchlists, activeListId, symbol, selectSymbol])
 
   // ── Watchlist handlers ────────────────────────────────────────────────────
 
@@ -1243,7 +1280,7 @@ export default function App() {
           activeConfigId={activeConfigId}
           onSwitchScreener={setActiveConfigId}
           onCreateScreener={handleCreateScreener}
-          onDeleteScreener={handleDeleteScreener}
+          onDeleteScreener={requestDeleteScreener}
           onRenameScreener={handleRenameScreener}
           onSaveUniverse={handleSaveUniverse}
           onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
@@ -1287,6 +1324,84 @@ export default function App() {
           onClose={() => setAnalysisOpen(false)}
         />
       )}
+
+      {/* ── Delete-screener confirmation ── */}
+      {confirmDelete && (
+        <ConfirmModal
+          title="Delete screener"
+          message={
+            confirmDelete.name
+              ? <>Delete <strong>{confirmDelete.name}</strong>? This cannot be undone.</>
+              : 'Delete this screener? This cannot be undone.'
+          }
+          confirmLabel="Delete"
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => { handleDeleteScreener(confirmDelete.id); setConfirmDelete(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Confirmation modal ─────────────────────────────────────────────────────────
+
+function ConfirmModal({ title, message, confirmLabel = 'Confirm', onConfirm, onCancel }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onCancel()
+      else if (e.key === 'Enter') onConfirm()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onConfirm, onCancel])
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1100,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '380px', background: 'var(--bg-panel)',
+          border: '1px solid var(--border)', borderRadius: '10px',
+          overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+        }}
+      >
+        <div style={{
+          padding: '14px 18px', borderBottom: '1px solid var(--border)',
+          fontWeight: 700, fontSize: '14px',
+        }}>{title}</div>
+        <div style={{ padding: '18px', fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+          {message}
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'flex-end', gap: '8px',
+          padding: '12px 18px', borderTop: '1px solid var(--border)',
+        }}>
+          <button
+            onClick={onCancel}
+            style={{
+              height: '30px', padding: '0 14px', fontSize: '12px', fontWeight: 600,
+              background: 'var(--bg-raised)', border: '1px solid var(--border)',
+              borderRadius: '6px', color: 'var(--text-primary)', cursor: 'pointer',
+            }}
+          >Cancel</button>
+          <button
+            autoFocus
+            onClick={onConfirm}
+            style={{
+              height: '30px', padding: '0 14px', fontSize: '12px', fontWeight: 600,
+              background: 'var(--red)', border: 'none',
+              borderRadius: '6px', color: '#fff', cursor: 'pointer',
+            }}
+          >{confirmLabel}</button>
+        </div>
+      </div>
     </div>
   )
 }

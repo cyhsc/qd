@@ -1,11 +1,17 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // ── SymbolRow ─────────────────────────────────────────────────────────────────
 
 function SymbolRow({ symbol, name, active, onClick, onDelete, onCopy, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }) {
   const [hovered, setHovered] = useState(false)
+  const rowRef = useRef(null)
+  // Keep the active row visible when navigating via keyboard.
+  useEffect(() => {
+    if (active) rowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [active])
   return (
     <div
+      ref={rowRef}
       draggable
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
