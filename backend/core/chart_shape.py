@@ -24,15 +24,27 @@ GMMA (Guppy Multiple Moving Average — the 12 EMAs)
                     (>0) vs rolling over (<0).
   - ``fast_slow``   bundle-slope alignment: slope(fast bundle) − slope(slow
                     bundle).  >0 the fast EMAs are leading (momentum building).
+  - ``fast_width``  signed internal spread of the fast bundle (3–15), ÷ denom.
+                    >0 fanned bullish (MA3>MA15), <0 fanned bearish; magnitude =
+                    how wide the fast fan is.
+  - ``slow_width``  signed internal spread of the slow bundle (30–60), ÷ denom.
+  - ``fast_width_slope`` per-bar change in ``fast_width`` over ``lookback`` —
+                    fast fan opening (>0) vs closing (<0).
+  - ``slow_width_slope`` same for the slow fan.
 
 MACD (12,26,9)
-  - ``macd``        MACD line / price.
-  - ``macd_hist``   MACD histogram / price (momentum acceleration).
+  - ``macd``        MACD line / denom.
+  - ``macd_signal`` signal line / denom.
+  - ``macd_hist``   histogram / denom (momentum acceleration).
+  - ``macd_slope``        per-bar change in ``macd`` over ``lookback``.
+  - ``macd_signal_slope`` per-bar change in ``macd_signal``.
+  - ``macd_hist_slope``   per-bar change in ``macd_hist``.
 
 SQZ (Beardy Squeeze Pro)
   - ``sqz``         compression regime in [0,1]: 0 no squeeze, 0.33 low,
                     0.67 mid, 1.0 tightest.
-  - ``sqz_mom``     squeeze momentum / price (signed strength of the squeeze).
+  - ``sqz_mom``     squeeze momentum / denom (signed strength of the squeeze).
+  - ``sqz_mom_slope`` per-bar change in ``sqz_mom`` over ``lookback``.
 
 Every field is unitless, so the per-bar vectors are directly comparable across
 symbols and can be fed to a model as-is.
@@ -57,7 +69,10 @@ _SQZ_LEVEL = {
 # Field order of the emitted signature (handy for CSV / vectorizing).
 SHAPE_FIELDS = [
     "stack", "separation", "sep_trend", "slope", "curvature", "fast_slow",
-    "macd", "macd_hist", "sqz", "sqz_mom",
+    "fast_width", "slow_width", "fast_width_slope", "slow_width_slope",
+    "macd", "macd_signal", "macd_hist",
+    "macd_slope", "macd_signal_slope", "macd_hist_slope",
+    "sqz", "sqz_mom", "sqz_mom_slope",
 ]
 
 
@@ -135,7 +150,7 @@ def extract_chart_shape(
     center      = all_arr.mean(axis=0)
 
     # MACD (default settings, matching the chart).
-    macd_line, _sig, macd_hist = talib.MACD(
+    macd_line, signal_line, macd_hist = talib.MACD(
         closes, fastperiod=12, slowperiod=26, signalperiod=9
     )
 
@@ -177,17 +192,30 @@ def extract_chart_shape(
         else:             gap = 0.0
         separation = gap / denom
 
-        # separation `lookback` bars ago, for its trend
-        prev_gap = None
+        # Signed internal fan widths (spread within each bundle), sign from the
+        # extreme-period pair — mirrors calc_rwb's fast_width / slow_width.
+        fw_raw = (fmax - fmin) if emas[3][i]  >= emas[15][i] else (fmin - fmax)
+        sw_raw = (smax - smin) if emas[30][i] >= emas[60][i] else (smin - smax)
+        fast_width = fw_raw / denom
+        slow_width = sw_raw / denom
+
+        # State `lookback` bars ago, for the trend/slope fields
+        prev_gap = prev_fw = prev_sw = None
         j = i - lookback
         denom_j = _valid_denom(j) if j >= 0 else None
         if denom_j is not None and not np.isnan(all_arr[:, j]).any():
             pf, ps = fast_arr[:, j], slow_arr[:, j]
-            if   pf.min() > ps.max(): pg = pf.min() - ps.max()
-            elif ps.min() > pf.max(): pg = pf.max() - ps.min()
-            else:                     pg = 0.0
+            pfmin, pfmax = pf.min(), pf.max()
+            psmin, psmax = ps.min(), ps.max()
+            if   pfmin > psmax: pg = pfmin - psmax
+            elif psmin > pfmax: pg = pfmax - psmin
+            else:               pg = 0.0
             prev_gap = pg / denom_j
-        sep_trend = (separation - prev_gap) if prev_gap is not None else 0.0
+            prev_fw  = ((pfmax - pfmin) if emas[3][j]  >= emas[15][j] else (pfmin - pfmax)) / denom_j
+            prev_sw  = ((psmax - psmin) if emas[30][j] >= emas[60][j] else (psmin - psmax)) / denom_j
+        sep_trend        = (separation - prev_gap) if prev_gap is not None else 0.0
+        fast_width_slope = ((fast_width - prev_fw) / lookback) if prev_fw is not None else 0.0
+        slow_width_slope = ((slow_width - prev_sw) / lookback) if prev_sw is not None else 0.0
 
         slope     = _nslope(center, i, denom)
         # curvature: normalized 2nd difference of the bundle center
@@ -201,16 +229,35 @@ def extract_chart_shape(
         if slope is None or curvature is None or fast_slow is None:
             continue
 
+        # Normalized change of a value series over `lookback` (0.0 if the prior
+        # point is unavailable), each point scaled by its own denom.
+        def _val_slope(cur_norm, arr):
+            if denom_j is None:
+                return 0.0
+            pv = arr[j]
+            return 0.0 if np.isnan(pv) else (cur_norm - float(pv) / denom_j) / lookback
+
         # MACD structure
         m = macd_line[i]
+        s = signal_line[i]
         h = macd_hist[i]
         macd_norm = float(m) / denom if not np.isnan(m) else 0.0
+        sig_norm  = float(s) / denom if not np.isnan(s) else 0.0
         hist_norm = float(h) / denom if not np.isnan(h) else 0.0
+        macd_slope        = _val_slope(macd_norm, macd_line)
+        macd_signal_slope = _val_slope(sig_norm,  signal_line)
+        macd_hist_slope   = _val_slope(hist_norm, macd_hist)
 
         # SQZ structure
         level, mom = sqz_by_time.get(times[i], (0, 0.0))
         sqz_state = level / 3.0
         sqz_mom   = mom / denom
+        prev_sqz_mom = None
+        if denom_j is not None:
+            pv = sqz_by_time.get(times[j])
+            if pv is not None:
+                prev_sqz_mom = pv[1] / denom_j
+        sqz_mom_slope = ((sqz_mom - prev_sqz_mom) / lookback) if prev_sqz_mom is not None else 0.0
 
         out.append({
             "time":       times[i],
@@ -220,10 +267,19 @@ def extract_chart_shape(
             "slope":      round(slope, 6),
             "curvature":  round(curvature, 6),
             "fast_slow":  round(fast_slow, 6),
-            "macd":       round(macd_norm, 6),
-            "macd_hist":  round(hist_norm, 6),
-            "sqz":        round(sqz_state, 4),
-            "sqz_mom":    round(sqz_mom, 6),
+            "fast_width":       round(fast_width, 6),
+            "slow_width":       round(slow_width, 6),
+            "fast_width_slope": round(fast_width_slope, 6),
+            "slow_width_slope": round(slow_width_slope, 6),
+            "macd":              round(macd_norm, 6),
+            "macd_signal":       round(sig_norm, 6),
+            "macd_hist":         round(hist_norm, 6),
+            "macd_slope":        round(macd_slope, 6),
+            "macd_signal_slope": round(macd_signal_slope, 6),
+            "macd_hist_slope":   round(macd_hist_slope, 6),
+            "sqz":           round(sqz_state, 4),
+            "sqz_mom":       round(sqz_mom, 6),
+            "sqz_mom_slope": round(sqz_mom_slope, 6),
         })
 
     return out

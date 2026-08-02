@@ -2499,14 +2499,24 @@ const FEATURE_LABELS = {
   slope:      'Slope',
   curvature:  'Curvature',
   fast_slow:  'Fast–slow slope',
-  macd:       'MACD',
-  macd_hist:  'MACD hist',
-  sqz:        'Squeeze',
-  sqz_mom:    'Squeeze mom',
+  fast_width: 'Fast width',
+  slow_width: 'Slow width',
+  fast_width_slope: 'Fast width slope',
+  slow_width_slope: 'Slow width slope',
+  macd:              'MACD',
+  macd_signal:       'MACD signal',
+  macd_hist:         'MACD hist',
+  macd_slope:        'MACD slope',
+  macd_signal_slope: 'MACD signal slope',
+  macd_hist_slope:   'MACD hist slope',
+  sqz:               'Squeeze',
+  sqz_mom:           'Squeeze mom',
+  sqz_mom_slope:     'Squeeze mom slope',
 }
 
 // Small auto-scaled line chart for a single feature series (oldest → newest).
-function Sparkline({ values, width = 260, height = 64 }) {
+// hoverIdx / onHover drive a crosshair synchronized across all sparklines.
+function Sparkline({ values, hoverIdx, onHover, width = 260, height = 64 }) {
   const pad = 6
   const n = values.length
   if (n === 0) return null
@@ -2520,23 +2530,49 @@ function Sparkline({ values, width = 260, height = 64 }) {
   const pts = values.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(' ')
   const zeroY = (min < 0 && max > 0) ? yAt(0) : null
   const last = values[n - 1]
-  const lastColor = last > 0 ? 'var(--green)' : last < 0 ? 'var(--red)' : 'var(--text-muted)'
+  const colorOf = (v) => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-muted)'
+
+  const handleMove = (e) => {
+    if (!onHover) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (!rect.width) return
+    const vbX = ((e.clientX - rect.left) / rect.width) * width
+    let i = Math.round(((vbX - pad) / innerW) * (n - 1))
+    i = Math.max(0, Math.min(n - 1, i))
+    onHover(i)
+  }
+
+  const hoverValid = hoverIdx != null && hoverIdx >= 0 && hoverIdx < n
+  const hx = hoverValid ? xAt(hoverIdx) : null
+
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
-         preserveAspectRatio="none" style={{ display: 'block' }}>
+         preserveAspectRatio="none" style={{ display: 'block', cursor: 'crosshair' }}
+         onMouseMove={handleMove}
+         onMouseLeave={() => onHover && onHover(null)}>
       {zeroY != null && (
         <line x1={pad} x2={width - pad} y1={zeroY} y2={zeroY}
               stroke="var(--border)" strokeWidth="1" strokeDasharray="3 3" />
       )}
       <polyline points={pts} fill="none" stroke="var(--blue)" strokeWidth="1.5"
                 vectorEffect="non-scaling-stroke" />
-      <circle cx={xAt(n - 1)} cy={yAt(last)} r="2.5" fill={lastColor} />
+      {hoverValid ? (
+        <>
+          <line x1={hx} x2={hx} y1={pad} y2={height - pad}
+                stroke="var(--text-muted)" strokeWidth="1"
+                vectorEffect="non-scaling-stroke" />
+          <circle cx={hx} cy={yAt(values[hoverIdx])} r="2.5" fill={colorOf(values[hoverIdx])} />
+        </>
+      ) : (
+        <circle cx={xAt(n - 1)} cy={yAt(last)} r="2.5" fill={colorOf(last)} />
+      )}
     </svg>
   )
 }
 
 function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
   const [view, setView] = useState('table')
+  const [hoverIdx, setHoverIdx] = useState(null)   // shared crosshair index (chart view)
 
   const center = (msg) => (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
@@ -2554,6 +2590,8 @@ function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
   const tableRows = allRows.slice(-FEATURE_MAX_ROWS).reverse()   // newest first
   const truncated = allRows.length > FEATURE_MAX_ROWS
   const chartRows = allRows.slice(-FEATURE_CHART_ROWS)           // oldest → newest
+  const hoverValid = hoverIdx != null && hoverIdx >= 0 && hoverIdx < chartRows.length
+  const hoverDate  = hoverValid ? chartRows[hoverIdx].time : null
 
   const NormBtn = ({ value, label }) => (
     <button
@@ -2609,6 +2647,15 @@ function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
             : ` · last ${Math.min(FEATURE_CHART_ROWS, allRows.length)} bars`}
           {' · dimensionless — comparable across stocks'}
         </span>
+        {view === 'chart' && (
+          <span style={{
+            marginLeft: 'auto', fontSize: '12px', fontWeight: 700,
+            fontFamily: 'var(--font-mono)',
+            color: hoverDate ? 'var(--blue)' : 'var(--text-muted)',
+          }}>
+            {hoverDate ?? 'hover to inspect'}
+          </span>
+        )}
       </div>
 
       {view === 'table' ? (
@@ -2656,9 +2703,9 @@ function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
           }}>
             {fields.map(f => {
               const vals = chartRows.map(r => r[f])
-              const lastV = vals[vals.length - 1]
               const minV = Math.min(...vals), maxV = Math.max(...vals)
-              const lastColor = lastV > 0 ? 'var(--green)' : lastV < 0 ? 'var(--red)' : 'var(--text-muted)'
+              const showV = hoverValid ? vals[hoverIdx] : vals[vals.length - 1]
+              const showColor = showV > 0 ? 'var(--green)' : showV < 0 ? 'var(--red)' : 'var(--text-muted)'
               return (
                 <div key={f} style={{
                   border: '1px solid var(--border)', borderRadius: '8px',
@@ -2668,11 +2715,11 @@ function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
                     <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
                       {FEATURE_LABELS[f] ?? f}
                     </span>
-                    <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastColor }}>
-                      {lastV >= 0 ? '+' : ''}{lastV.toFixed(4)}
+                    <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)', color: showColor }}>
+                      {showV >= 0 ? '+' : ''}{showV.toFixed(4)}
                     </span>
                   </div>
-                  <Sparkline values={vals} />
+                  <Sparkline values={vals} hoverIdx={hoverIdx} onHover={setHoverIdx} />
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                     <span>{minV.toFixed(3)}</span>
                     <span>{maxV.toFixed(3)}</span>
