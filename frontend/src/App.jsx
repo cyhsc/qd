@@ -167,6 +167,10 @@ export default function App() {
   const [dividendsData,     setDividendsData]     = useState(null)
   const [dividendsLoading,  setDividendsLoading]  = useState(false)
   const [dividendsSymbol,   setDividendsSymbol]   = useState(null)
+  const [featureData,       setFeatureData]       = useState(null)
+  const [featureLoading,    setFeatureLoading]    = useState(false)
+  const [featureKey,        setFeatureKey]        = useState(null)   // `${symbol}:${norm}`
+  const [featureNorm,       setFeatureNorm]       = useState('price') // 'price' | 'atr'
 
   // Analysis modal state
   const [analysisOpen,    setAnalysisOpen]    = useState(false)
@@ -678,16 +682,38 @@ export default function App() {
     }
   }, [dividendsSymbol])
 
+  const fetchFeatures = useCallback(async (sym, norm) => {
+    const key = `${sym}:${norm}`
+    if (featureKey === key) return
+    setFeatureLoading(true)
+    setFeatureData(null)
+    try {
+      const res = await fetch(`/api/stocks/${sym}/shape?normalize=${norm}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setFeatureData(await res.json())
+      setFeatureKey(key)
+    } catch { /* silently show empty */ } finally {
+      setFeatureLoading(false)
+    }
+  }, [featureKey])
+
+  const handleFeatureNorm = useCallback((norm) => {
+    setFeatureNorm(norm)
+    if (symbol) fetchFeatures(symbol, norm)
+  }, [symbol, fetchFeatures])
+
   const handleTabChange = useCallback((tab) => {
     setMainTab(tab)
     if (tab === 'financials' && symbol) fetchFinancials(symbol)
     if (tab === 'dividends'  && symbol) fetchDividends(symbol)
-  }, [symbol, fetchFinancials, fetchDividends])
+    if (tab === 'feature'    && symbol) fetchFeatures(symbol, featureNorm)
+  }, [symbol, fetchFinancials, fetchDividends, fetchFeatures, featureNorm])
 
   // Reload lazy tabs if symbol changes while on that tab
   useEffect(() => {
     if (mainTab === 'financials' && symbol && financialsSymbol !== symbol) fetchFinancials(symbol)
     if (mainTab === 'dividends'  && symbol && dividendsSymbol  !== symbol) fetchDividends(symbol)
+    if (mainTab === 'feature'    && symbol) fetchFeatures(symbol, featureNorm)
   }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Patch a single condition in the active screen config (backend + local state)
@@ -1134,7 +1160,7 @@ export default function App() {
             background: 'var(--bg-panel)', borderBottom: '1px solid var(--border)',
             padding: '0 20px', flexShrink: 0, height: '36px',
           }}>
-            {['chart', 'overview', 'financials', 'dividends'].map(tab => (
+            {['chart', 'overview', 'financials', 'dividends', 'feature'].map(tab => (
               <button
                 key={tab}
                 onClick={() => handleTabChange(tab)}
@@ -1146,13 +1172,14 @@ export default function App() {
                   fontSize: '12px', fontWeight: mainTab === tab ? 600 : 400,
                   cursor: 'pointer', textTransform: 'capitalize', transition: 'color 0.1s',
                 }}
-              >{tab}</button>
+              >{tab === 'feature' ? 'Feature Data' : tab}</button>
             ))}
           </div>
 
           {mainTab === 'overview'   && <OverviewPanel info={info} />}
           {mainTab === 'financials' && <FinancialsPanel data={financialsData} loading={financialsLoading} symbol={symbol} />}
           {mainTab === 'dividends'  && <DividendsPanel  data={dividendsData}  loading={dividendsLoading}  symbol={symbol} />}
+          {mainTab === 'feature'    && <FeatureDataPanel data={featureData} loading={featureLoading} symbol={symbol} norm={featureNorm} onSetNorm={handleFeatureNorm} />}
 
           {mainTab === 'chart' && <>
 
@@ -2455,6 +2482,206 @@ function DividendsPanel({ data, loading, symbol }) {
             </>
           )}
         </>
+      )}
+    </div>
+  )
+}
+
+// ── Feature Data (chart-shape signature) ──────────────────────────────────────
+
+const FEATURE_MAX_ROWS   = 500   // cap rendered table rows (newest first)
+const FEATURE_CHART_ROWS = 250   // trailing bars per sparkline
+
+const FEATURE_LABELS = {
+  stack:      'Stack (fan order)',
+  separation: 'Separation',
+  sep_trend:  'Sep. trend',
+  slope:      'Slope',
+  curvature:  'Curvature',
+  fast_slow:  'Fast–slow slope',
+  macd:       'MACD',
+  macd_hist:  'MACD hist',
+  sqz:        'Squeeze',
+  sqz_mom:    'Squeeze mom',
+}
+
+// Small auto-scaled line chart for a single feature series (oldest → newest).
+function Sparkline({ values, width = 260, height = 64 }) {
+  const pad = 6
+  const n = values.length
+  if (n === 0) return null
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const span = (max - min) || 1
+  const innerW = width - pad * 2
+  const innerH = height - pad * 2
+  const xAt = (i) => pad + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW)
+  const yAt = (v) => pad + innerH - ((v - min) / span) * innerH
+  const pts = values.map((v, i) => `${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(' ')
+  const zeroY = (min < 0 && max > 0) ? yAt(0) : null
+  const last = values[n - 1]
+  const lastColor = last > 0 ? 'var(--green)' : last < 0 ? 'var(--red)' : 'var(--text-muted)'
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
+         preserveAspectRatio="none" style={{ display: 'block' }}>
+      {zeroY != null && (
+        <line x1={pad} x2={width - pad} y1={zeroY} y2={zeroY}
+              stroke="var(--border)" strokeWidth="1" strokeDasharray="3 3" />
+      )}
+      <polyline points={pts} fill="none" stroke="var(--blue)" strokeWidth="1.5"
+                vectorEffect="non-scaling-stroke" />
+      <circle cx={xAt(n - 1)} cy={yAt(last)} r="2.5" fill={lastColor} />
+    </svg>
+  )
+}
+
+function FeatureDataPanel({ data, loading, symbol, norm, onSetNorm }) {
+  const [view, setView] = useState('table')
+
+  const center = (msg) => (
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+      {msg}
+    </div>
+  )
+  if (!symbol) return center('Search for a symbol to see feature data')
+  if (loading)  return center('Computing feature data…')
+  if (!data)    return center('No data available')
+
+  const fields = data.fields ?? []
+  const allRows = data.data ?? []
+  if (allRows.length === 0) return center(`Not enough bars to compute features for ${data.symbol}`)
+
+  const tableRows = allRows.slice(-FEATURE_MAX_ROWS).reverse()   // newest first
+  const truncated = allRows.length > FEATURE_MAX_ROWS
+  const chartRows = allRows.slice(-FEATURE_CHART_ROWS)           // oldest → newest
+
+  const NormBtn = ({ value, label }) => (
+    <button
+      onClick={() => onSetNorm(value)}
+      style={{
+        height: '24px', padding: '0 10px', fontSize: '11px', fontWeight: 600,
+        border: '1px solid var(--border)', cursor: 'pointer',
+        background: norm === value ? 'var(--blue)' : 'var(--bg-raised)',
+        color: norm === value ? '#fff' : 'var(--text-secondary)',
+        borderRadius: value === 'price' ? '5px 0 0 5px' : '0 5px 5px 0',
+      }}
+    >{label}</button>
+  )
+
+  const ViewBtn = ({ value, label }) => (
+    <button
+      onClick={() => setView(value)}
+      style={{
+        height: '24px', padding: '0 10px', fontSize: '11px', fontWeight: 600,
+        border: '1px solid var(--border)', cursor: 'pointer',
+        background: view === value ? 'var(--blue)' : 'var(--bg-raised)',
+        color: view === value ? '#fff' : 'var(--text-secondary)',
+        borderRadius: value === 'table' ? '5px 0 0 5px' : '0 5px 5px 0',
+      }}
+    >{label}</button>
+  )
+
+  const cell = (v) => {
+    if (typeof v !== 'number') return String(v)
+    const color = v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-muted)'
+    return <span style={{ color }}>{v >= 0 ? '+' : ''}{v.toFixed(4)}</span>
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Header row: view toggle + normalize toggle + meta */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '14px',
+        padding: '12px 28px', flexShrink: 0, flexWrap: 'wrap',
+      }}>
+        <div style={{ display: 'flex' }}>
+          <ViewBtn value="table" label="Table" />
+          <ViewBtn value="chart" label="Chart" />
+        </div>
+        <div style={{ display: 'flex' }}>
+          <NormBtn value="price" label="Price-norm" />
+          <NormBtn value="atr"   label="ATR-norm" />
+        </div>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          {data.symbol} · {allRows.length.toLocaleString()} bars
+          {view === 'table'
+            ? (truncated ? ` · showing latest ${FEATURE_MAX_ROWS}` : '')
+            : ` · last ${Math.min(FEATURE_CHART_ROWS, allRows.length)} bars`}
+          {' · dimensionless — comparable across stocks'}
+        </span>
+      </div>
+
+      {view === 'table' ? (
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 28px 24px' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', fontFamily: 'var(--font-mono)' }}>
+            <thead>
+              <tr>
+                {['time', ...fields].map((h, idx) => (
+                  <th key={h} style={{
+                    position: 'sticky', top: 0, zIndex: 1,
+                    background: 'var(--bg-panel)',
+                    textAlign: idx === 0 ? 'left' : 'right',
+                    padding: '8px 12px',
+                    borderBottom: '2px solid var(--border)',
+                    fontSize: '11px', fontWeight: 600, color: 'var(--text-muted)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((row, i) => (
+                <tr key={row.time ?? i} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '6px 12px', fontSize: '12px', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    {row.time}
+                  </td>
+                  {fields.map(f => (
+                    <td key={f} style={{ textAlign: 'right', padding: '6px 12px', fontSize: '12px', fontWeight: 600 }}>
+                      {cell(row[f])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div style={{ flex: 1, overflow: 'auto', padding: '0 28px 24px' }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
+            gap: '16px',
+          }}>
+            {fields.map(f => {
+              const vals = chartRows.map(r => r[f])
+              const lastV = vals[vals.length - 1]
+              const minV = Math.min(...vals), maxV = Math.max(...vals)
+              const lastColor = lastV > 0 ? 'var(--green)' : lastV < 0 ? 'var(--red)' : 'var(--text-muted)'
+              return (
+                <div key={f} style={{
+                  border: '1px solid var(--border)', borderRadius: '8px',
+                  padding: '10px 12px', background: 'var(--bg-raised)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      {FEATURE_LABELS[f] ?? f}
+                    </span>
+                    <span style={{ fontSize: '12px', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastColor }}>
+                      {lastV >= 0 ? '+' : ''}{lastV.toFixed(4)}
+                    </span>
+                  </div>
+                  <Sparkline values={vals} />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '9px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    <span>{minV.toFixed(3)}</span>
+                    <span>{maxV.toFixed(3)}</span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
     </div>
   )

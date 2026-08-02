@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh, last_trading_day
 from core.prices import repair_trailing_daily_close
 from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
+from core.chart_shape import extract_chart_shape, SHAPE_FIELDS
 from core.screen import screen_history, screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
 from db import CacheMeta, Price, ScreenConfig, get_db
@@ -173,6 +174,47 @@ async def write_cache(db: AsyncSession, symbol: str, interval: str, rows: list[d
     await db.commit()
 
 
+async def load_prices(db: AsyncSession, sym: str, yf_interval: str) -> list[Price]:
+    """Return cached price rows, fetching + caching from yfinance on a miss.
+
+    Mirrors the cache-miss path of ``/history`` so derived endpoints (indicators,
+    shape) don't silently return empty just because the chart hasn't been opened
+    for this symbol yet.  Returns ``[]`` if the symbol has no data upstream.
+    """
+    cached = await read_cached_prices(db, sym, yf_interval)
+    if cached:
+        return cached
+
+    max_period = INTERVAL_MAX_PERIOD.get(yf_interval, "max")
+    logger.info("Cache MISS %s | %s — fetching period=%s (derived)", sym, yf_interval, max_period)
+    ticker = yf.Ticker(sym)
+    hist = ticker.history(period=max_period, interval=yf_interval, auto_adjust=False)
+    if hist.empty:
+        return []
+    if yf_interval == "1d":
+        hist = repair_trailing_daily_close(ticker, hist)
+
+    db_rows = []
+    for ts, row in hist.iterrows():
+        o = _sf(row["Open"])
+        c = _sf(row["Close"])
+        if o is None or c is None:
+            continue
+        h = _sf(row["High"])
+        l = _sf(row["Low"])
+        v = int(row["Volume"]) if row["Volume"] == row["Volume"] else 0
+        t = format_time(ts, yf_interval)
+        db_rows.append({"symbol": sym, "interval": yf_interval,
+                        "ts": t, "open": o, "high": h, "low": l, "close": c, "volume": v})
+
+    try:
+        await write_cache(db, sym, yf_interval, db_rows)
+    except Exception as exc:
+        logger.warning("Cache write failed: %s", exc)
+
+    return await read_cached_prices(db, sym, yf_interval) or []
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/{symbol}/history")
@@ -255,7 +297,7 @@ async def get_indicators(
     if interval and yf_interval is None:
         raise HTTPException(status_code=400, detail="Invalid interval.")
 
-    rows = await read_cached_prices(db, sym, yf_interval)
+    rows = await load_prices(db, sym, yf_interval)
     if not rows:
         return {"symbol": sym, "interval": yf_interval, "ma": {}, "macd": {}}
 
@@ -297,6 +339,38 @@ async def get_indicators(
     return {"symbol": sym, "interval": yf_interval,
             "ma": ma_out, "ema": ema_out, "macd": macd_out,
             "guppy": guppy_out, "rwb": rwb_out, "squeeze": squeeze_out}
+
+
+@router.get("/{symbol}/shape")
+async def get_shape(
+    symbol: str,
+    interval: str = None,
+    limit: int = Query(default=0, ge=0),   # 0 = all bars; else last N
+    lookback: int = Query(default=5, ge=1),
+    normalize: str = Query(default="price"),   # "price" | "atr"
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-bar dimensionless chart-shape signature (GMMA + MACD + SQZ structure)."""
+    sym         = symbol.upper()
+    yf_interval = INTERVAL_MAP.get(interval) if interval else "1d"
+    if interval and yf_interval is None:
+        raise HTTPException(status_code=400, detail="Invalid interval.")
+    if normalize not in ("price", "atr"):
+        raise HTTPException(status_code=400, detail="normalize must be 'price' or 'atr'.")
+
+    rows = await load_prices(db, sym, yf_interval)
+    if not rows:
+        return {"symbol": sym, "interval": yf_interval, "fields": SHAPE_FIELDS, "data": []}
+
+    closes = np.array([r.close for r in rows], dtype=np.float64)
+    highs  = np.array([r.high  for r in rows], dtype=np.float64)
+    lows   = np.array([r.low   for r in rows], dtype=np.float64)
+    times  = [to_chart_time(r.ts) for r in rows]
+
+    data = extract_chart_shape(closes, highs, lows, times, lookback=lookback, normalize=normalize)
+    if limit:
+        data = data[-limit:]
+    return {"symbol": sym, "interval": yf_interval, "fields": SHAPE_FIELDS, "data": data}
 
 
 @router.get("/{symbol}/info")
