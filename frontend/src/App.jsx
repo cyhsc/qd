@@ -6,6 +6,7 @@ import { IndicatorPanel } from './components/IndicatorPanel'
 import { ScreenerPanel } from './components/ScreenerPanel'
 import { MarketPanel }  from './components/MarketPanel'
 import { AgentPanel }   from './components/AgentPanel'
+import { SimilarityPanel } from './components/SimilarityPanel'
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
@@ -1029,10 +1030,11 @@ export default function App() {
 
         {/* Top-level tabs */}
         {[
-          { id: 'market',   label: 'Market'   },
-          { id: 'chart',    label: 'Chart'    },
-          { id: 'screener', label: 'Screener' },
-          { id: 'agent',    label: 'Agent'    },
+          { id: 'market',     label: 'Market'     },
+          { id: 'chart',      label: 'Chart'      },
+          { id: 'screener',   label: 'Screener'   },
+          { id: 'similarity', label: 'Similarity' },
+          { id: 'agent',      label: 'Agent'      },
         ].map(({ id, label }) => (
           <button
             key={id}
@@ -1341,6 +1343,20 @@ export default function App() {
         height: '100%', overflow: 'hidden',
       }}>
         <MarketPanel theme={theme} />
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          SIMILARITY VIEW
+      ══════════════════════════════════════════════════════════════ */}
+      <div style={{
+        display: topView === 'similarity' ? 'flex' : 'none',
+        height: '100%', overflow: 'hidden',
+      }}>
+        <SimilarityPanel
+          watchlists={watchlists}
+          active={topView === 'similarity'}
+          onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
+        />
       </div>
 
       {/* ══════════════════════════════════════════════════════════════

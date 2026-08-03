@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from .endpoints import agent_tasks, chart_configs, finviz_screen, market, preferences, screen_configs, stocks, watchlists
+from .endpoints import agent_tasks, chart_configs, finviz_screen, market, preferences, samples, screen_configs, stocks, watchlists
 
 router = APIRouter()
 router.include_router(watchlists.router,     prefix="/watchlists",     tags=["watchlists"])
@@ -11,3 +11,4 @@ router.include_router(screen_configs.router, prefix="/screen-configs", tags=["sc
 router.include_router(chart_configs.router,  prefix="/chart-configs",  tags=["chart-configs"])
 router.include_router(agent_tasks.router,    prefix="/agent-tasks",    tags=["agent-tasks"])
 router.include_router(finviz_screen.router,  prefix="/finviz",         tags=["finviz"])
+router.include_router(samples.router,        prefix="/samples",        tags=["samples"])

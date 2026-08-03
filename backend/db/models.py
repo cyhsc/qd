@@ -138,6 +138,30 @@ class AgentTaskRun(Base):
     task = relationship("AgentTask", back_populates="runs")
 
 
+class FeatureSample(Base):
+    """A hand-picked exemplar bar for example-based (similarity) screening.
+
+    ``vector`` holds the chart-shape feature signature of one (symbol, date)
+    bar as a {feature: value} JSON blob (stored, not queried column-wise, so the
+    feature set can evolve without a migration).  ``collection`` is a free-form
+    label; a collection is simply the set of rows sharing it.
+    """
+    __tablename__ = "feature_samples"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    collection = Column(String,  nullable=False)
+    symbol     = Column(String,  nullable=False)
+    date       = Column(String,  nullable=False)   # "YYYY-MM-DD" bar labeled
+    normalize  = Column(String,  nullable=False, default="atr")
+    vector     = Column(JSON,    nullable=False)   # {feature: value, ...}
+    created_at = Column(String,  nullable=False, default="")
+
+    __table_args__ = (
+        UniqueConstraint("collection", "symbol", "date", name="uq_feature_sample"),
+        Index("ix_feature_samples_collection", "collection"),
+    )
+
+
 class Price(Base):
     """Cached OHLCV bars — upserted on every successful yfinance fetch."""
     __tablename__ = "prices"
