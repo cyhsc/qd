@@ -26,3 +26,7 @@ Thumbs.db
 
 # vim swap files
 *.swp
+
+# ML artifacts (large / regenerable)
+backend/ml/data/
+backend/ml/models/
