@@ -172,6 +172,10 @@ export default function App() {
   const [featureLoading,    setFeatureLoading]    = useState(false)
   const [featureKey,        setFeatureKey]        = useState(null)   // `${symbol}:${norm}`
   const [featureNorm,       setFeatureNorm]       = useState('price') // 'price' | 'atr'
+  // Chart pattern range-select (drag two bars → save as similarity pattern)
+  const [patternMode,       setPatternMode]       = useState(false)
+  const [patternStart,      setPatternStart]      = useState(null)
+  const [pendingRange,      setPendingRange]      = useState(null)
 
   // Analysis modal state
   const [analysisOpen,    setAnalysisOpen]    = useState(false)
@@ -866,6 +870,19 @@ export default function App() {
     fetchStock(sym, interval)
   }, [fetchStock, interval])
 
+  // Chart pattern-select: first click sets the start bar, second the end bar,
+  // then hand the (sorted) range to the Similarity tab.
+  const handlePatternPick = useCallback((t) => {
+    setPatternStart(prev => {
+      if (!prev) return t
+      const [start, end] = prev <= t ? [prev, t] : [t, prev]
+      setPendingRange({ symbol, start, end })
+      setPatternMode(false)
+      setTopView('similarity')
+      return null
+    })
+  }, [symbol])
+
   // Chart view: Up/Down arrows step through the active watchlist's symbols.
   useEffect(() => {
     if (topView !== 'chart') return
@@ -1033,8 +1050,8 @@ export default function App() {
           { id: 'market',     label: 'Market'     },
           { id: 'chart',      label: 'Chart'      },
           { id: 'screener',   label: 'Screener'   },
-          { id: 'similarity', label: 'Similarity' },
           { id: 'agent',      label: 'Agent'      },
+          { id: 'similarity', label: 'Similarity' },
         ].map(({ id, label }) => (
           <button
             key={id}
@@ -1222,6 +1239,20 @@ export default function App() {
                   opacity: (!symbol && !input.trim()) ? 0.4 : 1,
                 }}
               >Analysis</button>
+              <button
+                type="button"
+                onClick={() => { setPatternMode(m => !m); setPatternStart(null) }}
+                disabled={!symbol}
+                title="Click two bars on the chart to save that range as a similarity pattern"
+                style={{
+                  height: '24px', padding: '0 10px', marginLeft: '6px',
+                  background: patternMode ? 'var(--blue)' : 'var(--bg-raised)',
+                  border: '1px solid var(--border)', borderRadius: '4px',
+                  color: patternMode ? '#fff' : 'var(--text-secondary)',
+                  fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                  opacity: symbol ? 1 : 0.4,
+                }}
+              >{patternMode ? (patternStart ? 'Pick end bar…' : 'Pick start bar…') : 'Pattern'}</button>
               <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 4px' }} />
               <IndicatorPanel
                 maConfigs={maConfigs}       onMaChange={setMaConfigs}
@@ -1303,6 +1334,8 @@ export default function App() {
                     }))
                   : []}
                 screenIndData={screenIndData}
+                patternMode={patternMode}
+                onPatternPick={handlePatternPick}
               />
             )}
             {symbol && chartType === 'renko' && <RenkoChart symbol={symbol} theme={theme} />}
@@ -1356,6 +1389,8 @@ export default function App() {
           watchlists={watchlists}
           active={topView === 'similarity'}
           onOpenChart={(sym) => { selectSymbol(sym); setTopView('chart') }}
+          pendingRange={pendingRange}
+          onConsumeRange={() => setPendingRange(null)}
         />
       </div>
 

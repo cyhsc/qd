@@ -151,9 +151,11 @@ class FeatureSample(Base):
     id         = Column(Integer, primary_key=True, autoincrement=True)
     collection = Column(String,  nullable=False)
     symbol     = Column(String,  nullable=False)
-    date       = Column(String,  nullable=False)   # "YYYY-MM-DD" bar labeled
+    date       = Column(String,  nullable=False)   # point: the bar; range: the END bar
+    kind       = Column(String,  nullable=False, default="point")   # "point" | "range"
     normalize  = Column(String,  nullable=False, default="atr")
-    vector     = Column(JSON,    nullable=False)   # {feature: value, ...}
+    # point: {feature: value};  range: {"start","end","seq":[{feature:value}, ...]}
+    vector     = Column(JSON,    nullable=False)
     created_at = Column(String,  nullable=False, default="")
 
     __table_args__ = (

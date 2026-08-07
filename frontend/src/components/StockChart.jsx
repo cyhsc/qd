@@ -204,8 +204,12 @@ export function StockChart({
   squeezeData    = null,  // { mom: [...], sqz: [...] }
   screenIndConfigs = [],  // [{ id, configId, name }] — screener-based 0/1 panes
   screenIndData    = {},  // { rowId: [{time, value}] }
+  patternMode      = false, // when true, chart clicks report bar times for range-select
+  onPatternPick    = null,  // (timeString) => void
 }) {
   const containerRef   = useRef(null)
+  const patternModeRef = useRef(patternMode)
+  const onPatternPickRef = useRef(onPatternPick)
   const chartRef       = useRef(null)
   const mainSeriesRef  = useRef(null)   // active main series (type varies with chartType)
   const volumeRef      = useRef(null)
@@ -288,6 +292,8 @@ export function StockChart({
   useEffect(() => { themeRef.current = theme }, [theme])
   useEffect(() => { intervalRef.current = interval }, [interval])
   useEffect(() => { chartTypeRef.current = chartType }, [chartType])
+  useEffect(() => { patternModeRef.current = patternMode }, [patternMode])
+  useEffect(() => { onPatternPickRef.current = onPatternPick }, [onPatternPick])
 
   // Live-update chart colors when theme changes
   useEffect(() => {
@@ -341,6 +347,15 @@ export function StockChart({
       priceScaleId: 'vol',
     })
     chart.priceScale('vol').applyOptions({ scaleMargins: MARGINS_SOLO.vol })
+
+    chart.subscribeClick(param => {
+      if (!patternModeRef.current || !onPatternPickRef.current || param.time == null) return
+      const t = param.time
+      const s = typeof t === 'string'
+        ? t
+        : (t && t.year != null ? `${t.year}-${String(t.month).padStart(2, '0')}-${String(t.day).padStart(2, '0')}` : null)
+      if (s) onPatternPickRef.current(s)
+    })
 
     chart.subscribeCrosshairMove(param => {
       if (param.logical == null || !param.seriesData?.size) {
