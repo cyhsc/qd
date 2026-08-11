@@ -78,6 +78,48 @@ def calc_macd(
     }
 
 
+def calc_stochrsi(
+    closes: np.ndarray,
+    rsi_period:   int,
+    stoch_period: int,
+    k_smooth:     int,
+    d_smooth:     int,
+    times:        list,
+) -> dict:
+    """Stochastic RSI.
+
+    Computes RSI over ``rsi_period``, stochastic-normalizes it over
+    ``stoch_period`` (``(rsi − min) / (max − min) × 100``), then smooths
+    the result by ``k_smooth`` (%K) and smooths %K again by ``d_smooth``
+    (%D).  Both lines live on a 0–100 scale.
+
+    Returns a dict with two keys:
+    - ``k`` – %K line: list of ``{time, value}``
+    - ``d`` – %D line: list of ``{time, value}``
+
+    Warm-up entries (NaN) are omitted independently for each line.
+    """
+    rsi     = talib.RSI(closes, timeperiod=rsi_period)
+    lowest  = talib.MIN(rsi, timeperiod=stoch_period)
+    highest = talib.MAX(rsi, timeperiod=stoch_period)
+    denom   = highest - lowest
+    with np.errstate(invalid="ignore", divide="ignore"):
+        stoch = np.where(denom == 0, 0.0, (rsi - lowest) / denom * 100.0)
+
+    k = talib.SMA(stoch, timeperiod=k_smooth)
+    d = talib.SMA(k,     timeperiod=d_smooth)
+
+    k_out: list = []
+    d_out: list = []
+    for i in range(len(closes)):
+        if not np.isnan(k[i]):
+            k_out.append({"time": times[i], "value": round(float(k[i]), 4)})
+        if not np.isnan(d[i]):
+            d_out.append({"time": times[i], "value": round(float(d[i]), 4)})
+
+    return {"k": k_out, "d": d_out}
+
+
 # ── Guppy Multiple Moving Average ─────────────────────────────────────────────
 
 GUPPY_SHORT = [3, 5, 8, 10, 12, 15]

@@ -68,6 +68,7 @@ function isConfigPopulated(ind) {
   return !!(
     ind.maConfigs?.length      ||
     ind.macdConfigs?.length    ||
+    ind.stochrsiConfigs?.length ||
     ind.guppyConfigs?.length   ||
     ind.rwbConfigs?.length     ||
     ind.squeezeConfigs?.length ||
@@ -131,6 +132,18 @@ export default function App() {
 
   // Persist chart type to localStorage (must be after useState above)
   useEffect(() => { localStorage.setItem('qd_chart_type', chartType) }, [chartType])
+
+  // Main-chart / indicator-pane height split. Persisted to backend preferences
+  // (so it follows the user across machines) with a localStorage cache for
+  // instant apply on reload before prefs finish loading.
+  const clampChartSplit = (v) =>
+    (typeof v === 'number' && isFinite(v)) ? Math.max(0.2, Math.min(0.85, v)) : 0.65
+  const [chartSplit, setChartSplit] = useState(() => clampChartSplit(lsJson('qd_chart_split', 0.65)))
+  const handleSplitChange = useCallback((v) => {
+    const c = clampChartSplit(v)
+    setChartSplit(c)
+    try { localStorage.setItem('qd_chart_split', String(c)) } catch { /* ignore */ }
+  }, [])
   const [info,          setInfo]          = useState(null)
   const [candles,       setCandles]       = useState(null)
   const [volume,        setVolume]        = useState(null)
@@ -139,6 +152,7 @@ export default function App() {
   const [error,         setError]         = useState(null)
   const [maConfigs,     setMaConfigs]     = useState(() => lsJson('qd_ma_configs',     []))
   const [macdConfigs,   setMacdConfigs]   = useState(() => lsJson('qd_macd_configs',   []))
+  const [stochrsiConfigs, setStochrsiConfigs] = useState(() => lsJson('qd_stochrsi_configs', []))
   const [guppyConfigs,  setGuppyConfigs]  = useState(() => lsJson('qd_guppy_configs',  []))
   const [rwbConfigs,    setRwbConfigs]    = useState(() => lsJson('qd_rwb_configs',    []))
   const [squeezeConfigs,setSqueezeConfigs]= useState(() => lsJson('qd_squeeze_configs',[]))
@@ -156,6 +170,7 @@ export default function App() {
   const [maData,      setMaData]      = useState({})
   const [guppyData,   setGuppyData]   = useState(null)
   const [macdData,    setMacdData]    = useState({})
+  const [stochrsiData, setStochrsiData] = useState({})
   const [rwbData,     setRwbData]     = useState(null)
   const [squeezeData, setSqueezeData] = useState(null)
   const [screenIndData, setScreenIndData] = useState({})   // { rowId: [{time,value}] }
@@ -222,7 +237,8 @@ export default function App() {
     theme,
     activeListId,
     activeChartConfigId,
-  }), [theme, activeListId, activeChartConfigId])
+    chartSplit,
+  }), [theme, activeListId, activeChartConfigId, chartSplit])
 
   // Save preferences to backend (fire-and-forget)
   const savePrefs = useCallback((data) => {
@@ -245,6 +261,7 @@ export default function App() {
   const initialIndicatorsRef = useRef({
     maConfigs:      lsJson('qd_ma_configs',     []),
     macdConfigs:    lsJson('qd_macd_configs',   []),
+    stochrsiConfigs: lsJson('qd_stochrsi_configs', []),
     guppyConfigs:   lsJson('qd_guppy_configs',  []),
     rwbConfigs:     lsJson('qd_rwb_configs',    []),
     squeezeConfigs: lsJson('qd_squeeze_configs',[]),
@@ -268,6 +285,11 @@ export default function App() {
           if (data.activeChartConfigId != null) {
             setActiveChartConfigId(data.activeChartConfigId)
             savedActiveChartConfigId = data.activeChartConfigId
+          }
+          if (data.chartSplit != null) {
+            const c = clampChartSplit(data.chartSplit)
+            setChartSplit(c)
+            try { localStorage.setItem('qd_chart_split', String(c)) } catch { /* ignore */ }
           }
         } else {
           // First time — seed backend with current state
@@ -325,7 +347,7 @@ export default function App() {
   useEffect(() => {
     if (!prefsLoaded.current) return
     scheduleSave(prefsSnapshot())
-  }, [theme, activeListId, activeChartConfigId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [theme, activeListId, activeChartConfigId, chartSplit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load watchlists from backend on mount
   const reloadWatchlists = useCallback(() => {
@@ -454,6 +476,7 @@ export default function App() {
     if (!indicators) return
     setMaConfigs(     indicators.maConfigs      ?? [])
     setMacdConfigs(   indicators.macdConfigs    ?? [])
+    setStochrsiConfigs(indicators.stochrsiConfigs ?? [])
     setGuppyConfigs(  indicators.guppyConfigs   ?? [])
     setRwbConfigs(    indicators.rwbConfigs     ?? [])
     setSqueezeConfigs(indicators.squeezeConfigs ?? [])
@@ -533,10 +556,10 @@ export default function App() {
   // Clears stale data immediately so the chart doesn't show old indicators
   // for a new symbol while the fetch is in flight.
 
-  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, guppyCfgs, rwbCfgs, sqzCfgs) => {
-    const hasAny = maCfgs.length || macdCfgs.length || guppyCfgs.length || rwbCfgs.length || sqzCfgs.length
+  const fetchIndicators = useCallback(async (sym, ivl, maCfgs, macdCfgs, stochrsiCfgs, guppyCfgs, rwbCfgs, sqzCfgs) => {
+    const hasAny = maCfgs.length || macdCfgs.length || stochrsiCfgs.length || guppyCfgs.length || rwbCfgs.length || sqzCfgs.length
     if (!sym || !hasAny) {
-      setMaData({}); setGuppyData(null); setMacdData({}); setRwbData(null); setSqueezeData(null); return
+      setMaData({}); setGuppyData(null); setMacdData({}); setStochrsiData({}); setRwbData(null); setSqueezeData(null); return
     }
     // Indicators write to the same chart series as the candles. Tie them to the
     // current selection so a late response for a previous symbol can't call
@@ -547,6 +570,7 @@ export default function App() {
     if (ivl) params.set('interval', ivl)
     maCfgs.forEach(m   => params.append('ma',   m.period))
     macdCfgs.forEach(m => params.append('macd', `${m.fast},${m.slow},${m.signal}`))
+    stochrsiCfgs.forEach(s => params.append('stochrsi', `${s.rsi},${s.stoch},${s.k},${s.d}`))
     if (guppyCfgs.length) params.set('guppy',   '1')
     if (rwbCfgs.length)   params.set('rwb',     '1')
     if (sqzCfgs.length)   params.set('squeeze', '1')
@@ -558,6 +582,7 @@ export default function App() {
       setMaData(data.ma         ?? {})
       setGuppyData(data.guppy   ?? null)
       setMacdData(data.macd     ?? {})
+      setStochrsiData(data.stochrsi ?? {})
       setRwbData(data.rwb       ?? null)
       setSqueezeData(data.squeeze ?? null)
     } catch { /* indicators are optional */ }
@@ -565,10 +590,13 @@ export default function App() {
 
   useEffect(() => {
     if (!symbol || !candles) {
-      setMaData({}); setGuppyData(null); setMacdData({}); setRwbData(null); setSqueezeData(null); return
+      setMaData({}); setGuppyData(null); setMacdData({}); setStochrsiData({}); setRwbData(null); setSqueezeData(null); return
     }
-    fetchIndicators(symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs)
-  }, [symbol, interval, maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, candles, fetchIndicators])
+    // Only fetch/draw indicators that aren't toggled off.
+    const vis = arr => arr.filter(c => !c.hidden)
+    fetchIndicators(symbol, interval, vis(maConfigs), vis(macdConfigs), vis(stochrsiConfigs),
+                    vis(guppyConfigs), vis(rwbConfigs), vis(squeezeConfigs))
+  }, [symbol, interval, maConfigs, macdConfigs, stochrsiConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, candles, fetchIndicators])
 
   // ── Fetch screen-indicator history (daily interval only) ─────────────────
   useEffect(() => {
@@ -615,11 +643,11 @@ export default function App() {
     if (!chartConfigsLoaded.current) return
     const id = activeChartConfigIdRef.current
     if (id == null) return
-    const indicators = { maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType }
+    const indicators = { maConfigs, macdConfigs, stochrsiConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType }
     // Mirror into local state so switching configs sees the latest values
     setChartConfigs(prev => prev.map(c => c.id !== id ? c : { ...c, indicators }))
     saveChartConfig(id, indicators)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [maConfigs, macdConfigs, stochrsiConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch to a different chart config — apply its indicators immediately
   const handleChartConfigChange = useCallback((id) => {
@@ -632,7 +660,7 @@ export default function App() {
   // Create a new chart config, seeded from the current indicator state
   const handleCreateChartConfig = useCallback(async (name) => {
     const indicators = {
-      maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType,
+      maConfigs, macdConfigs, stochrsiConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType,
     }
     const res = await fetch('/api/chart-configs', {
       method: 'POST',
@@ -643,7 +671,7 @@ export default function App() {
     const created = await res.json()
     setChartConfigs(prev => [...prev, created])
     setActiveChartConfigId(created.id)
-  }, [maConfigs, macdConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType])
+  }, [maConfigs, macdConfigs, stochrsiConfigs, guppyConfigs, rwbConfigs, squeezeConfigs, screenIndConfigs, chartType])
 
   // Delete a chart config (must keep at least one)
   const handleDeleteChartConfig = useCallback(async (id) => {
@@ -1257,6 +1285,7 @@ export default function App() {
               <IndicatorPanel
                 maConfigs={maConfigs}       onMaChange={setMaConfigs}
                 macdConfigs={macdConfigs}   onMacdChange={setMacdConfigs}
+                stochrsiConfigs={stochrsiConfigs} onStochrsiChange={setStochrsiConfigs}
                 guppyConfigs={guppyConfigs} onGuppyChange={setGuppyConfigs}
                 rwbConfigs={rwbConfigs}         onRwbChange={setRwbConfigs}
                 squeezeConfigs={squeezeConfigs} onSqueezeChange={setSqueezeConfigs}
@@ -1322,13 +1351,14 @@ export default function App() {
                 chartType={chartType} visibleDays={RANGE_DAYS[range]} theme={theme}
                 interval={interval ?? 'D'}
                 events={eventsData}
-                maConfigs={maConfigs}       maData={maData}
-                macdConfigs={macdConfigs}   macdData={macdData}
-                guppyConfigs={guppyConfigs} guppyData={guppyData}
-                rwbConfigs={rwbConfigs}         rwbData={rwbData}
-                squeezeConfigs={squeezeConfigs} squeezeData={squeezeData}
+                maConfigs={maConfigs.filter(c => !c.hidden)}       maData={maData}
+                macdConfigs={macdConfigs.filter(c => !c.hidden)}   macdData={macdData}
+                stochrsiConfigs={stochrsiConfigs.filter(c => !c.hidden)} stochrsiData={stochrsiData}
+                guppyConfigs={guppyConfigs.filter(c => !c.hidden)} guppyData={guppyData}
+                rwbConfigs={rwbConfigs.filter(c => !c.hidden)}         rwbData={rwbData}
+                squeezeConfigs={squeezeConfigs.filter(c => !c.hidden)} squeezeData={squeezeData}
                 screenIndConfigs={interval === 'D'
-                  ? screenIndConfigs.map(c => ({
+                  ? screenIndConfigs.filter(c => !c.hidden).map(c => ({
                       ...c,
                       name: screenConfigs.find(s => s.id === c.configId)?.name ?? `#${c.configId}`,
                     }))
@@ -1336,6 +1366,8 @@ export default function App() {
                 screenIndData={screenIndData}
                 patternMode={patternMode}
                 onPatternPick={handlePatternPick}
+                split={chartSplit}
+                onSplitChange={handleSplitChange}
               />
             )}
             {symbol && chartType === 'renko' && <RenkoChart symbol={symbol} theme={theme} />}

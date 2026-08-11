@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from core.market_hours import DAILY_INTERVALS, daily_cache_is_fresh, last_trading_day
 from core.prices import repair_trailing_daily_close
-from core.technicals import calc_ema, calc_sma, calc_macd, calc_guppy, calc_rwb, calc_squeeze
+from core.technicals import calc_ema, calc_sma, calc_macd, calc_stochrsi, calc_guppy, calc_rwb, calc_squeeze
 from core.chart_shape import extract_chart_shape, SHAPE_FIELDS
 from core.screen import screen_history, screen_individual, screen_symbols_detailed
 from core.renko import compute_renko
@@ -287,6 +287,7 @@ async def get_indicators(
     ma:    list[int] = Query(default=[]),   # ?ma=20&ma=50
     ema:   list[int] = Query(default=[]),   # ?ema=3&ema=5
     macd:  list[str] = Query(default=[]),   # ?macd=12,26,9
+    stochrsi: list[str] = Query(default=[]),# ?stochrsi=14,14,3,3
     guppy: bool      = Query(default=False),# ?guppy=1
     rwb:     bool    = Query(default=False),# ?rwb=1
     squeeze: bool    = Query(default=False),# ?squeeze=1
@@ -332,12 +333,27 @@ async def get_indicators(
             continue
         macd_out[param] = calc_macd(closes, fast, slow, sig, times)
 
+    # ── Stochastic RSI ────────────────────────────────────────────────────────
+    stochrsi_out: dict = {}
+    for param in set(stochrsi):
+        parts = param.split(",")
+        if len(parts) != 4:
+            continue
+        try:
+            rp, sp, ks, ds = (int(p) for p in parts)
+        except ValueError:
+            continue
+        if min(rp, sp, ks, ds) < 1 or len(closes) < rp + sp:
+            continue
+        stochrsi_out[param] = calc_stochrsi(closes, rp, sp, ks, ds, times)
+
     guppy_out   = calc_guppy(closes, times)                  if guppy   else None
     rwb_out     = calc_rwb(closes, times)                    if rwb     else None
     squeeze_out = calc_squeeze(closes, highs, lows, times)   if squeeze else None
 
     return {"symbol": sym, "interval": yf_interval,
             "ma": ma_out, "ema": ema_out, "macd": macd_out,
+            "stochrsi": stochrsi_out,
             "guppy": guppy_out, "rwb": rwb_out, "squeeze": squeeze_out}
 
 

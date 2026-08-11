@@ -15,6 +15,9 @@ const SPLIT_DEFAULT = 0.65
 const SPLIT_MIN     = 0.20
 const SPLIT_MAX     = 0.85
 
+const clampSplit = (v) =>
+  isFinite(v) ? Math.max(SPLIT_MIN, Math.min(SPLIT_MAX, v)) : SPLIT_DEFAULT
+
 // Static margins used when no sub-pane is visible
 const MARGINS_SOLO = {
   main: { top: 0.05, bottom: 0.22 },
@@ -194,22 +197,27 @@ export function StockChart({
   events         = null,  // { earnings: [...], dividends: [...] }
   maConfigs      = [],
   macdConfigs    = [],
+  stochrsiConfigs = [],
   guppyConfigs   = [],
   rwbConfigs     = [],
   squeezeConfigs = [],
   maData         = {},    // { "20": [{time,value}, ...] }
   guppyData      = null,  // { short: {"3": [...], ...}, long: {"30": [...], ...} }
   macdData       = {},    // { "12,26,9": { macd_line, signal_line, histogram } }
+  stochrsiData   = {},    // { "14,14,3,3": { k: [...], d: [...] } }
   rwbData        = null,  // { fast_width: [...], slow_width: [...], rwb: [...] }
   squeezeData    = null,  // { mom: [...], sqz: [...] }
   screenIndConfigs = [],  // [{ id, configId, name }] — screener-based 0/1 panes
   screenIndData    = {},  // { rowId: [{time, value}] }
   patternMode      = false, // when true, chart clicks report bar times for range-select
   onPatternPick    = null,  // (timeString) => void
+  split: splitProp = SPLIT_DEFAULT,  // persisted main-chart / indicator-pane height ratio
+  onSplitChange    = null,  // (ratio) => void — fired when the user finishes dragging
 }) {
   const containerRef   = useRef(null)
   const patternModeRef = useRef(patternMode)
   const onPatternPickRef = useRef(onPatternPick)
+  const onSplitChangeRef = useRef(onSplitChange)
   const chartRef       = useRef(null)
   const mainSeriesRef  = useRef(null)   // active main series (type varies with chartType)
   const volumeRef      = useRef(null)
@@ -230,6 +238,12 @@ export function StockChart({
   const macdByTimeRef = useRef({})
   const macdScaleRef  = useRef(null)   // anchor series for scale-margin updates
 
+  // stochrsiSeriesMap: id → { k, d }
+  const stochrsiSeriesMap = useRef(new Map())
+  const stochrsiLastRef   = useRef({})
+  const stochrsiByTimeRef = useRef({})
+  const stochrsiScaleRef  = useRef(null)
+
   // guppySeriesMap: id → Map<period, series>
   const guppySeriesMap = useRef(new Map())
 
@@ -248,18 +262,23 @@ export function StockChart({
   const [hover,       setHover]      = useState(null)
   const [maLegend,    setMaLegend]   = useState({})
   const [macdLegend,  setMacdLegend] = useState({})
+  const [stochrsiLegend, setStochrsiLegend] = useState({})  // { id: { k, d } }
   const [rwbLegend,   setRwbLegend]  = useState(null)   // { fast, slow, rwb }
   const [sqzLegend,   setSqzLegend]  = useState(null)   // { mom, momColor, sqzColor }
   const [screenLegend, setScreenLegend] = useState({})  // { rowId: 0 | 1 }
   const [rightAxisW,  setRightAxisW] = useState(60)     // measured right-axis pixel width
 
   // ── Draggable split ───────────────────────────────────────────────────────
-  const [split,       setSplit]       = useState(SPLIT_DEFAULT)
+  const [split,       setSplit]       = useState(() => clampSplit(splitProp))
   const [isDragging,  setIsDragging]  = useState(false)
-  const splitRef      = useRef(SPLIT_DEFAULT)
+  const splitRef      = useRef(split)
   const isDraggingRef = useRef(false)
 
   useEffect(() => { splitRef.current = split }, [split])
+
+  // Adopt the persisted split when it arrives/changes (prefs load, cross-machine
+  // sync). Skipped mid-drag since the prop only changes on drag-end (same value).
+  useEffect(() => { setSplit(clampSplit(splitProp)) }, [splitProp])
 
   useEffect(() => {
     const onMove = (e) => {
@@ -273,6 +292,9 @@ export function StockChart({
       if (!isDraggingRef.current) return
       isDraggingRef.current = false
       setIsDragging(false)
+      // Report the height the user settled on so it can be persisted (backend
+      // prefs + local cache) and survive symbol changes, reloads, and machines.
+      onSplitChangeRef.current?.(splitRef.current)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
@@ -282,7 +304,8 @@ export function StockChart({
     }
   }, [])
 
-  const hasMacd   = macdConfigs.length      > 0
+  const hasMacd     = macdConfigs.length     > 0
+  const hasStochrsi = stochrsiConfigs.length > 0
   const hasRwb    = rwbConfigs.length       > 0
   const hasSqz    = squeezeConfigs.length   > 0
   const hasScreen = screenIndConfigs.length > 0
@@ -294,6 +317,7 @@ export function StockChart({
   useEffect(() => { chartTypeRef.current = chartType }, [chartType])
   useEffect(() => { patternModeRef.current = patternMode }, [patternMode])
   useEffect(() => { onPatternPickRef.current = onPatternPick }, [onPatternPick])
+  useEffect(() => { onSplitChangeRef.current = onSplitChange }, [onSplitChange])
 
   // Live-update chart colors when theme changes
   useEffect(() => {
@@ -309,8 +333,8 @@ export function StockChart({
   // to be recreated (empty dep array is intentional).
 
   const syncSubPaneMargins = useCallback(() => {
-    // Order: MACD → RWB → Squeeze → Screen  (matches activeSubPanes order in render)
-    const live = [macdScaleRef, rwbScaleRef, sqzScaleRef, screenScaleRef].filter(r => r.current != null)
+    // Order: MACD → StochRSI → RWB → Squeeze → Screen  (matches activeSubPanes order in render)
+    const live = [macdScaleRef, stochrsiScaleRef, rwbScaleRef, sqzScaleRef, screenScaleRef].filter(r => r.current != null)
     const total = live.length
     if (total === 0) return
     live.forEach((ref, idx) => {
@@ -362,6 +386,7 @@ export function StockChart({
         setHover(lastBarRef.current)
         setMaLegend({ ...maLastValsRef.current })
         setMacdLegend({ ...macdLastRef.current })
+        setStochrsiLegend({ ...stochrsiLastRef.current })
         return
       }
       const mainSeries = mainSeriesRef.current
@@ -393,6 +418,11 @@ export function StockChart({
         for (const [id, byTime] of Object.entries(macdByTimeRef.current))
           macdVals[id] = byTime.get(pt.time ?? pt.value) ?? macdLastRef.current[id] ?? null
         setMacdLegend(macdVals)
+
+        const srVals = {}
+        for (const [id, byTime] of Object.entries(stochrsiByTimeRef.current))
+          srVals[id] = byTime.get(pt.time ?? pt.value) ?? stochrsiLastRef.current[id] ?? null
+        setStochrsiLegend(srVals)
       }
       const maVals = {}
       for (const [id, series] of maSeriesMap.current) {
@@ -418,11 +448,13 @@ export function StockChart({
       mainSeriesRef.current = null
       volumeRef.current    = null
       macdScaleRef.current = null
+      stochrsiScaleRef.current = null
       rwbScaleRef.current  = null
       sqzScaleRef.current  = null
       screenScaleRef.current = null
       maSeriesMap.current.clear()
       macdSeriesMap.current.clear()
+      stochrsiSeriesMap.current.clear()
       guppySeriesMap.current.clear()
       rwbSeriesMap.current.clear()
       sqzSeriesMap.current.clear()
@@ -430,6 +462,8 @@ export function StockChart({
       maLastValsRef.current  = {}
       macdLastRef.current    = {}
       macdByTimeRef.current  = {}
+      stochrsiLastRef.current   = {}
+      stochrsiByTimeRef.current = {}
     }
   }, [])
 
@@ -667,6 +701,88 @@ export function StockChart({
     setMacdLegend({ ...macdLastRef.current })
   }, [macdConfigs, macdData, syncSubPaneMargins])
 
+  // ── Stochastic RSI series (%K / %D lines, 0–100 sub-pane) ──────────────────
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart    = chartRef.current
+    const map      = stochrsiSeriesMap.current
+    const incoming = new Set(stochrsiConfigs.map(s => s.id))
+
+    for (const [id, s] of map) {
+      if (!incoming.has(id)) {
+        chart.removeSeries(s.k)
+        chart.removeSeries(s.d)
+        map.delete(id)
+        delete stochrsiLastRef.current[id]
+        delete stochrsiByTimeRef.current[id]
+        if (stochrsiScaleRef.current === s.k) {
+          stochrsiScaleRef.current = map.values().next().value?.k ?? null
+        }
+      }
+    }
+    if (stochrsiConfigs.length === 0) {
+      stochrsiScaleRef.current = null
+      syncSubPaneMargins()
+      setStochrsiLegend({})
+      return
+    }
+
+    for (const cfg of stochrsiConfigs) {
+      if (!map.has(cfg.id)) {
+        // %K line — anchors the scale; carries the 20/80 reference bands
+        const kSeries = chart.addLineSeries({
+          color: cfg.kColor, lineWidth: 1,
+          priceScaleId: 'stochrsi',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+          autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+        })
+        const dSeries = chart.addLineSeries({
+          color: cfg.dColor, lineWidth: 1,
+          priceScaleId: 'stochrsi',
+          priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+        })
+        kSeries.createPriceLine({ price: 80, color: '#787b86', lineWidth: 1, lineStyle: 2, axisLabelVisible: false })
+        kSeries.createPriceLine({ price: 20, color: '#787b86', lineWidth: 1, lineStyle: 2, axisLabelVisible: false })
+        map.set(cfg.id, { k: kSeries, d: dSeries })
+        if (!stochrsiScaleRef.current) {
+          stochrsiScaleRef.current = kSeries
+          chart.priceScale('stochrsi').applyOptions({ visible: false })
+        }
+        syncSubPaneMargins()
+      } else {
+        const s = map.get(cfg.id)
+        s.k.applyOptions({ color: cfg.kColor })
+        s.d.applyOptions({ color: cfg.dColor })
+      }
+
+      const key = `${cfg.rsi},${cfg.stoch},${cfg.k},${cfg.d}`
+      const d   = stochrsiData[key]
+      if (!d) continue
+
+      const kLine = d.k ?? []
+      const dLine = d.d ?? []
+      const s = map.get(cfg.id)
+      s.k.setData(kLine)
+      s.d.setData(dLine)
+
+      const byTime = new Map()
+      const dByTime = new Map(dLine.map(p => [p.time, p.value]))
+      for (const p of kLine)
+        byTime.set(p.time, { k: p.value, d: dByTime.get(p.time) ?? null })
+      stochrsiByTimeRef.current[cfg.id] = byTime
+
+      if (kLine.length) {
+        stochrsiLastRef.current[cfg.id] = {
+          k: kLine[kLine.length - 1].value,
+          d: dLine.length ? dLine[dLine.length - 1].value : null,
+        }
+      }
+    }
+
+    setStochrsiLegend({ ...stochrsiLastRef.current })
+  }, [stochrsiConfigs, stochrsiData, syncSubPaneMargins])
+
   // ── Guppy MMA series ──────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -901,10 +1017,11 @@ export function StockChart({
 
   // Active sub-panes in display order; drives separators and legend positions.
   const activeSubPanes = [
-    hasMacd   && 'macd',
-    hasRwb    && 'rwb',
-    hasSqz    && 'sqz',
-    hasScreen && 'screen',
+    hasMacd     && 'macd',
+    hasStochrsi && 'stochrsi',
+    hasRwb      && 'rwb',
+    hasSqz      && 'sqz',
+    hasScreen   && 'screen',
   ].filter(Boolean)
   const totalSubPanes = activeSubPanes.length
   const H = totalSubPanes > 0 ? (1 - split) / totalSubPanes : 0
@@ -1041,6 +1158,29 @@ export function StockChart({
         </div>
       )}
 
+      {/* Stochastic RSI legend */}
+      {hasStochrsi && (
+        <div style={{
+          position: 'absolute', zIndex: 10, pointerEvents: 'none',
+          top: `calc(${paneTop(activeSubPanes.indexOf('stochrsi')) * 100}% + 8px)`, left: 12,
+          display: 'flex', flexWrap: 'wrap', gap: '14px',
+          fontSize: '11px', fontFamily: 'var(--font-mono)',
+        }}>
+          {stochrsiConfigs.map(cfg => {
+            const v = stochrsiLegend[cfg.id]
+            return (
+              <span key={cfg.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>
+                  StochRSI ({cfg.rsi},{cfg.stoch},{cfg.k},{cfg.d})
+                </span>
+                <span style={{ color: cfg.kColor }}>{v?.k != null ? v.k.toFixed(2) : '–'}</span>
+                <span style={{ color: cfg.dColor }}>{v?.d != null ? v.d.toFixed(2) : '–'}</span>
+              </span>
+            )
+          })}
+        </div>
+      )}
+
       {/* RWB legend */}
       {hasRwb && (
         <div style={{
@@ -1132,6 +1272,12 @@ export function StockChart({
           if (v?.macd != null) {
             const cfg = macdConfigs[0]
             valueEl = <span style={{ color: cfg?.macdColor ?? 'var(--text-secondary)', fontSize: 10 }}>{fmtMacd(v.macd)}</span>
+          }
+        } else if (pane === 'stochrsi') {
+          const v = Object.values(stochrsiLegend)[0]
+          if (v?.k != null) {
+            const cfg = stochrsiConfigs[0]
+            valueEl = <span style={{ color: cfg?.kColor ?? 'var(--text-secondary)', fontSize: 10 }}>{v.k.toFixed(1)}</span>
           }
         } else if (pane === 'rwb') {
           if (rwbLegend?.rwb != null)

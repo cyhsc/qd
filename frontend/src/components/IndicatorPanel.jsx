@@ -25,6 +25,29 @@ const removeBtnStyle = {
   padding: '0 2px', marginLeft: 'auto',
 }
 
+// ── Visibility toggle (eye) ─────────────────────────────────────────────────
+
+function VisBtn({ hidden, onToggle }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={hidden ? 'Show on chart' : 'Hide from chart'}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer',
+        padding: '0 1px', flexShrink: 0, display: 'flex', alignItems: 'center',
+        color: hidden ? 'var(--text-muted)' : 'var(--text-secondary)',
+      }}
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z" />
+        <circle cx="12" cy="12" r="3" />
+        {hidden && <line x1="3" y1="3" x2="21" y2="21" />}
+      </svg>
+    </button>
+  )
+}
+
 // ── Number input ──────────────────────────────────────────────────────────────
 
 function NumInput({ value, onChange, width = '52px', title }) {
@@ -45,7 +68,8 @@ function NumInput({ value, onChange, width = '52px', title }) {
 
 function MARow({ ma, onUpdate, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: ma.hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={ma.hidden} onToggle={() => onUpdate({ hidden: !ma.hidden })} />
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px',
         background: ma.color, flexShrink: 0,
@@ -72,7 +96,8 @@ function MARow({ ma, onUpdate, onRemove }) {
 
 function GuppyRow({ guppy, onUpdate, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: guppy.hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={guppy.hidden} onToggle={() => onUpdate({ hidden: !guppy.hidden })} />
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px',
         background: `linear-gradient(to bottom, ${guppy.shortColor} 50%, ${guppy.longColor} 50%)`,
@@ -94,9 +119,10 @@ function GuppyRow({ guppy, onUpdate, onRemove }) {
 
 // ── RWB row ───────────────────────────────────────────────────────────────────
 
-function RWBRow({ onRemove }) {
+function RWBRow({ hidden, onToggle, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={hidden} onToggle={onToggle} />
       {/* Mini colour preview: red / gray / green stripes */}
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
@@ -112,9 +138,10 @@ function RWBRow({ onRemove }) {
 
 // ── Squeeze row ───────────────────────────────────────────────────────────────
 
-function SqueezeRow({ onRemove }) {
+function SqueezeRow({ hidden, onToggle, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={hidden} onToggle={onToggle} />
       {/* Mini colour preview: green/gray/red/orange squeeze states + aqua/blue mom */}
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
@@ -134,7 +161,8 @@ const SCREEN_COLORS = ['#2962ff', '#f59e0b', '#ab47bc', '#26a69a']
 
 function ScreenRow({ cfg, colorIdx, screeners, onUpdate, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: cfg.hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={cfg.hidden} onToggle={() => onUpdate({ hidden: !cfg.hidden })} />
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px', flexShrink: 0,
         background: SCREEN_COLORS[colorIdx % SCREEN_COLORS.length],
@@ -156,7 +184,8 @@ function ScreenRow({ cfg, colorIdx, screeners, onUpdate, onRemove }) {
 
 function MACDRow({ macd, onUpdate, onRemove }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: macd.hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={macd.hidden} onToggle={() => onUpdate({ hidden: !macd.hidden })} />
       <div style={{
         width: '10px', height: '10px', borderRadius: '2px',
         background: macd.macdColor, flexShrink: 0,
@@ -175,9 +204,34 @@ function MACDRow({ macd, onUpdate, onRemove }) {
   )
 }
 
+// ── Stochastic RSI row ────────────────────────────────────────────────────────
+
+function StochRSIRow({ sr, onUpdate, onRemove }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', opacity: sr.hidden ? 0.45 : 1 }}>
+      <VisBtn hidden={sr.hidden} onToggle={() => onUpdate({ hidden: !sr.hidden })} />
+      <div style={{
+        width: '10px', height: '10px', borderRadius: '2px',
+        background: `linear-gradient(to bottom, ${sr.kColor} 50%, ${sr.dColor} 50%)`, flexShrink: 0,
+      }} />
+      <NumInput value={sr.rsi}   title="RSI period"       width="38px" onChange={v => onUpdate({ rsi: v })} />
+      <NumInput value={sr.stoch} title="Stochastic period" width="38px" onChange={v => onUpdate({ stoch: v })} />
+      <NumInput value={sr.k}     title="%K smoothing"      width="38px" onChange={v => onUpdate({ k: v })} />
+      <NumInput value={sr.d}     title="%D smoothing"      width="38px" onChange={v => onUpdate({ d: v })} />
+      <input type="color" value={sr.kColor} title="%K line color"
+        onChange={e => onUpdate({ kColor: e.target.value })}
+        style={{ ...colorPickerStyle, width: '24px' }} />
+      <input type="color" value={sr.dColor} title="%D line color"
+        onChange={e => onUpdate({ dColor: e.target.value })}
+        style={{ ...colorPickerStyle, width: '24px' }} />
+      <button onClick={onRemove} title="Remove" style={removeBtnStyle}>×</button>
+    </div>
+  )
+}
+
 // ── Indicator type section ────────────────────────────────────────────────────
 
-function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeaderIndent = '16px', children }) {
+function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeaderIndent = '36px', children }) {
   return (
     <div>
       {/* Section header */}
@@ -235,7 +289,7 @@ function IndicatorSection({ label, count, addLabel, onAdd, colHeaders, colHeader
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
 
-export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, guppyConfigs, onGuppyChange, rwbConfigs, onRwbChange, squeezeConfigs, onSqueezeChange, screenIndConfigs = [], onScreenIndChange, screenerConfigs = [] }) {
+export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChange, stochrsiConfigs = [], onStochrsiChange, guppyConfigs, onGuppyChange, rwbConfigs, onRwbChange, squeezeConfigs, onSqueezeChange, screenIndConfigs = [], onScreenIndChange, screenerConfigs = [] }) {
   const [open, setOpen] = useState(false)
   const panelRef        = useRef(null)
   const btnRef          = useRef(null)
@@ -258,6 +312,15 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeMA  = id     => onMaChange(maConfigs.filter(m => m.id !== id))
   const updateMA  = (id, up) => onMaChange(maConfigs.map(m => m.id === id ? { ...m, ...up } : m))
 
+  // StochRSI handlers
+  const addStochRSI    = () => onStochrsiChange([
+    ...stochrsiConfigs,
+    { id: Date.now().toString(), rsi: 14, stoch: 14, k: 3, d: 3,
+      kColor: '#2962ff', dColor: '#ff6d00' },
+  ])
+  const removeStochRSI  = id     => onStochrsiChange(stochrsiConfigs.filter(s => s.id !== id))
+  const updateStochRSI  = (id, up) => onStochrsiChange(stochrsiConfigs.map(s => s.id === id ? { ...s, ...up } : s))
+
   // Guppy handlers
   const addGuppy    = () => onGuppyChange([
     ...guppyConfigs,
@@ -272,6 +335,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
     onSqueezeChange([...squeezeConfigs, { id: Date.now().toString() }])
   }
   const removeSqueeze = id => onSqueezeChange(squeezeConfigs.filter(s => s.id !== id))
+  const toggleSqueeze = id => onSqueezeChange(squeezeConfigs.map(s => s.id === id ? { ...s, hidden: !s.hidden } : s))
 
   // RWB handlers
   const addRWB    = () => {
@@ -279,6 +343,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
     onRwbChange([...rwbConfigs, { id: Date.now().toString() }])
   }
   const removeRWB = id => onRwbChange(rwbConfigs.filter(r => r.id !== id))
+  const toggleRWB = id => onRwbChange(rwbConfigs.map(r => r.id === id ? { ...r, hidden: !r.hidden } : r))
 
   // MACD handlers
   const addMACD  = () => onMacdChange([
@@ -297,7 +362,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
   const removeScreen = id       => onScreenIndChange(screenIndConfigs.filter(s => s.id !== id))
   const updateScreen = (id, up) => onScreenIndChange(screenIndConfigs.map(s => s.id === id ? { ...s, ...up } : s))
 
-  const totalCount = maConfigs.length + macdConfigs.length + guppyConfigs.length + rwbConfigs.length + squeezeConfigs.length + screenIndConfigs.length
+  const totalCount = maConfigs.length + macdConfigs.length + stochrsiConfigs.length + guppyConfigs.length + rwbConfigs.length + squeezeConfigs.length + screenIndConfigs.length
   const btnLabel   = totalCount > 0 ? `Indicators (${totalCount})` : 'Indicators'
 
   return (
@@ -367,7 +432,7 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
               { label: 'Short', width: '28px' },
               { label: 'Long',  width: '28px' },
             ] : null}
-            colHeaderIndent="16px"
+            colHeaderIndent="36px"
           >
             {guppyConfigs.map(g => (
               <GuppyRow key={g.id} guppy={g}
@@ -402,6 +467,31 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
           {/* ── Divider ── */}
           <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
 
+          {/* ── Stochastic RSI ── */}
+          <IndicatorSection
+            label="Stochastic RSI"
+            count={stochrsiConfigs.length}
+            addLabel="Add StochRSI"
+            onAdd={addStochRSI}
+            colHeaders={[
+              { label: 'RSI',    width: '38px' },
+              { label: 'Stoch',  width: '38px' },
+              { label: '%K',     width: '38px' },
+              { label: '%D',     width: '38px' },
+              { label: 'Colors', width: '54px' },
+            ]}
+            colHeaderIndent="36px"
+          >
+            {stochrsiConfigs.map(sr => (
+              <StochRSIRow key={sr.id} sr={sr}
+                onUpdate={up => updateStochRSI(sr.id, up)}
+                onRemove={() => removeStochRSI(sr.id)} />
+            ))}
+          </IndicatorSection>
+
+          {/* ── Divider ── */}
+          <div style={{ borderTop: '1px solid var(--border)', margin: '10px 0' }} />
+
           {/* ── Squeeze ── */}
           <IndicatorSection
             label="Squeeze"
@@ -410,7 +500,9 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
             onAdd={addSqueeze}
           >
             {squeezeConfigs.map(s => (
-              <SqueezeRow key={s.id} onRemove={() => removeSqueeze(s.id)} />
+              <SqueezeRow key={s.id} hidden={s.hidden}
+                onToggle={() => toggleSqueeze(s.id)}
+                onRemove={() => removeSqueeze(s.id)} />
             ))}
           </IndicatorSection>
 
@@ -425,7 +517,9 @@ export function IndicatorPanel({ maConfigs, onMaChange, macdConfigs, onMacdChang
             onAdd={addRWB}
           >
             {rwbConfigs.map(r => (
-              <RWBRow key={r.id} onRemove={() => removeRWB(r.id)} />
+              <RWBRow key={r.id} hidden={r.hidden}
+                onToggle={() => toggleRWB(r.id)}
+                onRemove={() => removeRWB(r.id)} />
             ))}
           </IndicatorSection>
 
