@@ -312,11 +312,21 @@ async def _run_finviz_screen(task: AgentTask) -> dict:
         limit     = cfg.get("limit",     500),
     )
 
+    # Background job: nothing is blocked on an HTTP response, so give the
+    # paginated scrape a generous budget. Finviz fetches ~20 rows/request and
+    # sleeps between pages; a 5000-row screen is hundreds of sequential pages.
+    # Halve the inter-page sleep to keep large screens within the window.
     loop = asyncio.get_event_loop()
-    results = await asyncio.wait_for(
-        loop.run_in_executor(None, lambda: _run_screen(body)),
-        timeout=60.0,
-    )
+    try:
+        results = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: _run_screen(body, sleep_sec=0.5)),
+            timeout=600.0,
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            "Finviz screen timed out after 600s — the result set is very large. "
+            "Narrow the filters or lower the limit."
+        ) from None
 
     wl_name = None
     if cfg.get("save_watchlist") and cfg.get("watchlist_name"):

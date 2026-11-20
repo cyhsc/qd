@@ -23,6 +23,8 @@ const COND_META = {
   sqz_momentum_rising:                      { short: 'SQZ↑',   label: 'SQZ momentum rising'       },
   sqz_not_on:                               { short: '!ON',    label: 'SQZ not firing'            },
   sqz_consecutive_positive_bars:            { short: 'SQZ-N',  label: 'SQZ momentum conseq. +'    },
+  stochrsi_k_cross_up_d:                    { short: 'SR K×D', label: 'StochRSI %K crosses up %D' },
+  stochrsi_k_cross_up_value:                { short: 'SR K×V', label: 'StochRSI %K crosses up level' },
 }
 
 // Ordered list of every condition the analysis engine supports
@@ -35,6 +37,7 @@ const ALL_CONDITIONS = [
   'macd_line_positive', 'macd_line_rising', 'macd_histogram_positive', 'macd_histogram_rising',
   'macd_signal_positive', 'macd_histogram_consecutive_positive_bars',
   'sqz_momentum_positive', 'sqz_momentum_rising', 'sqz_not_on', 'sqz_consecutive_positive_bars',
+  'stochrsi_k_cross_up_d', 'stochrsi_k_cross_up_value',
 ]
 
 // Conditions that have a threshold + operator parameter
@@ -47,6 +50,7 @@ const PARAMETRIC_CONDITIONS = [
   'rwb_fast_width_consecutive_positive_bars',
   'rwb_slow_width_consecutive_rising_bars',
   'rwb_fast_width_consecutive_rising_bars',
+  'stochrsi_k_cross_up_value',
 ]
 
 // Per-condition parameter metadata. Bar-count conditions (the default) compare
@@ -60,6 +64,12 @@ const PARAM_META = {
     kind: 'value', unit: 'value', step: 0.1, min: null, defOp: 'gte', defThreshold: 0,
     ops: ['gte', 'gt', 'eq', 'lte', 'lt'],
   },
+  // "cross" kind: %K rises through a level. No operator choice — the crossover
+  // direction is fixed — so only the level (threshold) is editable.
+  stochrsi_k_cross_up_value: {
+    kind: 'cross', unit: 'level', step: 1, min: 0, defOp: 'cross_up', defThreshold: 20,
+    ops: ['cross_up'],
+  },
 }
 const paramMeta = (name) => PARAM_META[name] ?? DEFAULT_PARAM_META
 
@@ -67,6 +77,7 @@ const paramMeta = (name) => PARAM_META[name] ?? DEFAULT_PARAM_META
 const OP_LABEL = {
   bars:  { gt: '>', eq: '=', lt: '1≤n<' },
   value: { gt: '>', gte: '≥', eq: '=', lte: '≤', lt: '<' },
+  cross: { cross_up: '↗ crosses up' },
 }
 
 function shortName(name)  { return COND_META[name]?.short ?? name }
@@ -556,7 +567,7 @@ export function ScreenerPanel({
                           value={p.threshold ?? pm.defThreshold}
                           onChange={e => {
                             const raw = e.target.value
-                            let v = pm.kind === 'value' ? parseFloat(raw) : parseInt(raw)
+                            let v = pm.kind === 'bars' ? parseInt(raw) : parseFloat(raw)
                             if (Number.isNaN(v)) v = pm.defThreshold
                             if (pm.min != null) v = Math.max(pm.min, v)
                             onConditionParam(name, 'threshold', v)

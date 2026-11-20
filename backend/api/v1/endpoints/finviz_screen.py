@@ -106,11 +106,16 @@ def _make_fixed_overview():
     return FixedOverview
 
 
-def _run_screen(body: ScreenBody) -> list[dict]:
+def _run_screen(body: ScreenBody, sleep_sec: float = 1.0) -> list[dict]:
     """
     Execute a Finviz screen and return a list of result dicts.
     Raises ValueError on bad filter/signal/order values (finvizfinance
     propagates those as ValueError already).
+
+    ``screener_view`` fetches one page (~20 rows) per HTTP request and sleeps
+    ``sleep_sec`` between pages, so wall-clock time scales with the result set.
+    Callers with a generous timeout (e.g. background jobs) can lower sleep_sec
+    to finish large screens faster.
     """
     s = _make_fixed_overview()()
     s.set_filter(signal=body.signal, filters_dict=body.filters)
@@ -119,6 +124,7 @@ def _run_screen(body: ScreenBody) -> list[dict]:
         limit=body.limit,
         ascend=body.ascending,
         verbose=0,
+        sleep_sec=sleep_sec,
     )
     if df is None or df.empty:
         return []

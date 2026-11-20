@@ -17,9 +17,9 @@ from typing import Callable
 import numpy as np
 
 from core.analysis import (
-    LineAnalysis, MACDAnalysis, RWBAnalysis, SQZAnalysis,
+    LineAnalysis, MACDAnalysis, RWBAnalysis, SQZAnalysis, StochRSIAnalysis,
     Sign, Slope, SqueezeState,
-    analyze_macd, analyze_rwb, analyze_sqz,
+    analyze_macd, analyze_rwb, analyze_sqz, analyze_stochrsi,
     _sign, _slope, _SQZ_COLOR_TO_STATE,
 )
 from core.prices import get_daily_ohlc
@@ -27,6 +27,7 @@ from core.technicals import (
     calc_macd as _calc_macd,
     calc_rwb as _calc_rwb,
     calc_squeeze as _calc_squeeze,
+    calc_stochrsi as _calc_stochrsi,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,92 +48,102 @@ _CONDITIONS: dict[str, dict] = {
         # Parametric (value kind): default ">= 0" captures a non-negative RWB gap.
         # _apply_condition_overrides rebuilds this fn/description from user config.
         "description": "RWB gap ≥ 0 — fast/slow EMA cluster separation is at least 0",
-        "fn": lambda m, r, s: r.rwb.value >= 0,
+        "fn": lambda m, r, s, sr: r.rwb.value >= 0,
     },
     "rwb_gap_rising": {
         "description": "RWB gap rising — bullish separation is widening (momentum building)",
-        "fn": lambda m, r, s: r.rwb.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: r.rwb.slope == Slope.RISING,
     },
     "rwb_slow_width_rising": {
         "description": "RWB slow_width rising — long-term EMA cluster is fanning out (trend strengthening)",
-        "fn": lambda m, r, s: r.slow_width.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: r.slow_width.slope == Slope.RISING,
     },
     "rwb_fast_width_rising": {
         "description": "RWB fast_width rising — short-term EMA cluster is fanning out (momentum building)",
-        "fn": lambda m, r, s: r.fast_width.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: r.fast_width.slope == Slope.RISING,
     },
     "rwb_fast_above_slow": {
         "description": "RWB fast_width > slow_width — short-term cluster more dynamic than long-term",
-        "fn": lambda m, r, s: r.fast_width_above_slow_width,
+        "fn": lambda m, r, s, sr: r.fast_width_above_slow_width,
     },
     "rwb_bars_since_fast_above_slow": {
         "description": "RWB bars since fast width crossed above slow width — consecutive bars fast_width has been above slow_width",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     "rwb_slow_width_consecutive_positive_bars": {
         "description": "RWB slow_width consecutive positive bars — consecutive bars slow_width has been positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     "rwb_fast_width_consecutive_positive_bars": {
         "description": "RWB fast_width consecutive positive bars — consecutive bars fast_width has been positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     "rwb_slow_width_consecutive_rising_bars": {
         "description": "RWB slow_width consecutive rising bars — consecutive bars slow_width has been rising",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     "rwb_fast_width_consecutive_rising_bars": {
         "description": "RWB fast_width consecutive rising bars — consecutive bars fast_width has been rising",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     # ── MACD ─────────────────────────────────────────────────────────────────
     "macd_line_positive": {
         "description": "MACD line positive — fast EMA is above slow EMA",
-        "fn": lambda m, r, s: m.macd.sign == Sign.POSITIVE,
+        "fn": lambda m, r, s, sr: m.macd.sign == Sign.POSITIVE,
     },
     "macd_line_rising": {
         "description": "MACD line rising — bullish divergence growing",
-        "fn": lambda m, r, s: m.macd.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: m.macd.slope == Slope.RISING,
     },
     "macd_histogram_positive": {
         "description": "MACD histogram positive — net momentum is bullish",
-        "fn": lambda m, r, s: m.histogram.sign == Sign.POSITIVE,
+        "fn": lambda m, r, s, sr: m.histogram.sign == Sign.POSITIVE,
     },
     "macd_histogram_rising": {
         "description": "MACD histogram rising — momentum is accelerating upward",
-        "fn": lambda m, r, s: m.histogram.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: m.histogram.slope == Slope.RISING,
     },
     "macd_signal_positive": {
         "description": "MACD signal line positive — smoothed trend is bullish",
-        "fn": lambda m, r, s: m.signal.sign == Sign.POSITIVE,
+        "fn": lambda m, r, s, sr: m.signal.sign == Sign.POSITIVE,
     },
     "macd_histogram_consecutive_positive_bars": {
         "description": "MACD histogram consecutive positive bars — number of bars since histogram last turned positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
     },
     # ── SQZ ──────────────────────────────────────────────────────────────────
     "sqz_momentum_positive": {
         "description": "SQZ momentum positive — squeeze momentum is in bullish territory",
-        "fn": lambda m, r, s: s.momentum.sign == Sign.POSITIVE,
+        "fn": lambda m, r, s, sr: s.momentum.sign == Sign.POSITIVE,
     },
     "sqz_momentum_rising": {
         "description": "SQZ momentum rising — squeeze momentum is accelerating",
-        "fn": lambda m, r, s: s.momentum.slope == Slope.RISING,
+        "fn": lambda m, r, s, sr: s.momentum.slope == Slope.RISING,
     },
     "sqz_not_on": {
         "description": "SQZ not ON — squeeze has fired or is not active (energy releasing or neutral)",
-        "fn": lambda m, r, s: s.squeeze_state != SqueezeState.ON,
+        "fn": lambda m, r, s, sr: s.squeeze_state != SqueezeState.ON,
     },
     "sqz_consecutive_positive_bars": {
         "description": "SQZ consecutive positive bars — number of bars since momentum last turned positive",
         # Default fn is a placeholder; screen_individual() replaces it based on user config.
-        "fn": lambda m, r, s: True,
+        "fn": lambda m, r, s, sr: True,
+    },
+    # ── Stochastic RSI ─────────────────────────────────────────────────────────
+    "stochrsi_k_cross_up_d": {
+        "description": "StochRSI %K crossed up %D — blue line crossed above the red line (bullish)",
+        "fn": lambda m, r, s, sr: sr.k_cross_up_d,
+    },
+    "stochrsi_k_cross_up_value": {
+        "description": "StochRSI %K crosses up a level — blue line rose through a set value",
+        # Parametric (cross kind): rebuilt from user config in _apply_condition_overrides.
+        "fn": lambda m, r, s, sr: True,
     },
 }
 
@@ -372,42 +383,49 @@ _PARAMETRIC = {
         "kind": "value",
         "default_threshold": 0.0, "default_op": "gte",
         "description_tmpl": "RWB gap {sym} {thr} — fast/slow EMA cluster separation is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.rwb.value,
+        "value_fn": lambda m, r, s, sr: r.rwb.value,
     },
     "sqz_consecutive_positive_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "SQZ consecutive positive bars {sym} {thr} — bars since momentum last turned positive is {lbl} {thr}",
-        "value_fn": lambda m, r, s: s.consecutive_positive_bars,
+        "value_fn": lambda m, r, s, sr: s.consecutive_positive_bars,
     },
     "macd_histogram_consecutive_positive_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "MACD histogram consecutive positive bars {sym} {thr} — bars since histogram last turned positive is {lbl} {thr}",
-        "value_fn": lambda m, r, s: m.consecutive_positive_bars,
+        "value_fn": lambda m, r, s, sr: m.consecutive_positive_bars,
     },
     "rwb_bars_since_fast_above_slow": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "RWB bars since fast width crossed above slow width {sym} {thr} — consecutive bars fast_width above slow_width is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.bars_since_fast_above_slow,
+        "value_fn": lambda m, r, s, sr: r.bars_since_fast_above_slow,
     },
     "rwb_slow_width_consecutive_positive_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "RWB slow_width consecutive positive bars {sym} {thr} — consecutive bars slow_width has been positive is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.slow_width_consecutive_positive_bars,
+        "value_fn": lambda m, r, s, sr: r.slow_width_consecutive_positive_bars,
     },
     "rwb_fast_width_consecutive_positive_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "RWB fast_width consecutive positive bars {sym} {thr} — consecutive bars fast_width has been positive is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.fast_width_consecutive_positive_bars,
+        "value_fn": lambda m, r, s, sr: r.fast_width_consecutive_positive_bars,
     },
     "rwb_slow_width_consecutive_rising_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "RWB slow_width consecutive rising bars {sym} {thr} — consecutive bars slow_width has been rising is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.slow_width_consecutive_rising_bars,
+        "value_fn": lambda m, r, s, sr: r.slow_width_consecutive_rising_bars,
     },
     "rwb_fast_width_consecutive_rising_bars": {
         "default_threshold": 3, "default_op": "gt",
         "description_tmpl": "RWB fast_width consecutive rising bars {sym} {thr} — consecutive bars fast_width has been rising is {lbl} {thr}",
-        "value_fn": lambda m, r, s: r.fast_width_consecutive_rising_bars,
+        "value_fn": lambda m, r, s, sr: r.fast_width_consecutive_rising_bars,
+    },
+    # Crossover through a configurable level: %K was at/below {thr} last bar and
+    # strictly above it this bar.  No operator — the "cross up" is implied.
+    "stochrsi_k_cross_up_value": {
+        "kind": "cross",
+        "default_threshold": 20.0, "default_op": "cross_up",
+        "description_tmpl": "StochRSI %K crosses up {thr} — blue line rose through {thr} on the latest bar",
     },
 }
 
@@ -416,7 +434,18 @@ def _apply_condition_overrides(overrides: dict) -> None:
     """Rebuild parametric condition descriptions and fns from user settings."""
     for cname, meta in _PARAMETRIC.items():
         ov   = overrides.get(cname, {})
-        kind = meta.get("kind", "bars")           # "bars" (int streak) | "value" (float)
+        kind = meta.get("kind", "bars")           # "bars" (int streak) | "value" (float) | "cross" (level crossover)
+        if kind == "cross":
+            # %K crosses up a level: prev %K ≤ threshold < current %K.
+            threshold = float(ov.get("threshold", meta["default_threshold"]))
+            thr_txt   = f"{threshold:g}"
+            _CONDITIONS[cname]["description"] = meta["description_tmpl"].format(thr=thr_txt)
+            def _make_cross_fn(t):
+                def _fn(m, r, s, sr):
+                    return sr.k.prev_value <= t < sr.k.value
+                return _fn
+            _CONDITIONS[cname]["fn"] = _make_cross_fn(threshold)
+            continue
         if kind == "value":
             threshold = float(ov.get("threshold", meta["default_threshold"]))
             thr_txt   = f"{threshold:g}"
@@ -434,8 +463,8 @@ def _apply_condition_overrides(overrides: dict) -> None:
         )
         value_fn = meta["value_fn"]
         def _make_fn(vfn, t, o, k):
-            def _fn(m, r, s):
-                n = vfn(m, r, s)
+            def _fn(m, r, s, sr):
+                n = vfn(m, r, s, sr)
                 if o == "gt":  return n > t
                 if o == "gte": return n >= t
                 if o == "eq":  return n == t
@@ -522,6 +551,7 @@ def screen_individual(
     macd_result = analyze_macd(closes)
     rwb_result  = analyze_rwb(closes)
     sqz_result  = analyze_sqz(closes, highs, lows)
+    stochrsi_result = analyze_stochrsi(closes)
 
     # ── Effective verdict rules: backend defaults overridden by config ────
     effective_verdict_rules = _effective_verdict_rules(overrides)
@@ -532,7 +562,7 @@ def screen_individual(
     # ── Evaluate every condition ──────────────────────────────────────────
     conditions: list[ConditionResult] = []
     for name, spec in _CONDITIONS.items():
-        passed = bool(spec["fn"](macd_result, rwb_result, sqz_result))
+        passed = bool(spec["fn"](macd_result, rwb_result, sqz_result, stochrsi_result))
         conditions.append(ConditionResult(
             name=name,
             description=spec["description"],
@@ -599,6 +629,7 @@ def screen_history(
     macd_data = _calc_macd(closes, 12, 26, 9, dates)
     rwb_data  = _calc_rwb(closes, dates)
     sqz_data  = _calc_squeeze(closes, highs, lows, dates)
+    sr_data   = _calc_stochrsi(closes, 14, 14, 3, 3, dates)
 
     def _by_time(points):
         out = {}
@@ -616,6 +647,8 @@ def screen_history(
         "slow":   _by_time(rwb_data["slow_width"]),
         "rwb":    _by_time(rwb_data["rwb"]),
         "mom":    _by_time(sqz_data["mom"]),
+        "srk":    _by_time(sr_data["k"]),
+        "srd":    _by_time(sr_data["d"]),
     }
     sqz_color = {p["time"]: p.get("color") for p in sqz_data["sqz"]}
 
@@ -634,7 +667,7 @@ def screen_history(
     # have different warmup lengths (RWB slow width needs ~60 bars, MACD
     # ~35), and a streak may already be running before the last series
     # comes online.  Evaluation only happens once every series is present.
-    keys      = ("macd", "signal", "hist", "fast", "slow", "rwb", "mom")
+    keys      = ("macd", "signal", "hist", "fast", "slow", "rwb", "mom", "srk", "srd")
     eval_from = max(0, len(dates) - max_bars)
     prev: dict = {}   # per-series previous value (last available point)
     hist_pos = mom_pos = fast_pos = slow_pos = fast_rise = slow_rise = fast_above = 0
@@ -681,8 +714,12 @@ def screen_history(
                 squeeze_state=_SQZ_COLOR_TO_STATE.get(sqz_color.get(t), SqueezeState.NONE),
                 consecutive_positive_bars=mom_pos,
             )
+            sr = SimpleNamespace(
+                k=la("srk"), d=la("srd"),
+                k_cross_up_d=(prev["srk"] <= prev["srd"] and vals["srk"] > vals["srd"]),
+            )
             conds = [
-                ConditionResult(name=n, description="", passed=bool(fn(m, r, s)), verdict_role=role)
+                ConditionResult(name=n, description="", passed=bool(fn(m, r, s, sr)), verdict_role=role)
                 for n, fn, role in specs
             ]
             out.append({"time": t, "value": 1 if _evaluate_logic(conds, logic) else 0})

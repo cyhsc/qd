@@ -1083,7 +1083,12 @@ export default function App() {
         ].map(({ id, label }) => (
           <button
             key={id}
-            onClick={() => setTopView(id)}
+            onClick={() => {
+              setTopView(id)
+              // Re-fetch watchlists when entering the Chart view so edits made
+              // on another machine (shared backend) show up without a reload.
+              if (id === 'chart') reloadWatchlists()
+            }}
             style={{
               height: '40px', padding: '0 16px',
               background: 'none', border: 'none',

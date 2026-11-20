@@ -9,7 +9,12 @@ from typing import Sequence
 
 import numpy as np
 
-from core.technicals import calc_macd as _calc_macd, calc_rwb as _calc_rwb, calc_squeeze as _calc_squeeze
+from core.technicals import (
+    calc_macd as _calc_macd,
+    calc_rwb as _calc_rwb,
+    calc_squeeze as _calc_squeeze,
+    calc_stochrsi as _calc_stochrsi,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,14 @@ class SQZAnalysis:
     momentum:                  LineAnalysis
     squeeze_state:             SqueezeState
     consecutive_positive_bars: int   # bars since momentum last turned positive (0 if currently non-positive)
+
+
+@dataclass
+class StochRSIAnalysis:
+    """Full Stochastic RSI analysis result (%K = blue line, %D = red line)."""
+    k:            LineAnalysis   # %K (blue)
+    d:            LineAnalysis   # %D (red)
+    k_cross_up_d: bool           # %K crossed above %D on the latest bar
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +280,31 @@ def analyze_sqz(
         squeeze_state=state,
         consecutive_positive_bars=consecutive_positive,
     )
+
+
+def analyze_stochrsi(
+    prices: Sequence[float],
+    rsi_period:     int   = 14,
+    stoch_period:   int   = 14,
+    k_smooth:       int   = 3,
+    d_smooth:       int   = 3,
+    flat_threshold: float = 1e-10,
+) -> StochRSIAnalysis:
+    """
+    Analyse a Stochastic RSI indicator.
+
+    Returns sign + slope for the %K (blue) and %D (red) lines plus whether %K
+    crossed above %D on the most recent bar (was at/below the previous bar,
+    strictly above on the current bar).
+    """
+    arr   = np.asarray(prices, dtype=float)
+    times = list(range(len(arr)))
+    data  = _calc_stochrsi(arr, rsi_period, stoch_period, k_smooth, d_smooth, times)
+
+    k = _analyze_series(data["k"], flat_threshold)
+    d = _analyze_series(data["d"], flat_threshold)
+    # %K/%D share the same trailing dates, so the last two points of each line
+    # line up — a crossover is prev %K ≤ prev %D and current %K > current %D.
+    k_cross_up_d = k.prev_value <= d.prev_value and k.value > d.value
+
+    return StochRSIAnalysis(k=k, d=d, k_cross_up_d=k_cross_up_d)
